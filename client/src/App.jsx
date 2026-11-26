@@ -13,15 +13,19 @@ import AboutPage from './pages/AboutPage.jsx';
 
 const PartnerDashboardPage = lazy(() => import('./pages/PartnerDashboardPage.jsx'));
 const AdminQueue = lazy(() => import('./pages/AdminQueue.jsx'));
-const PICKUP_PASS_KEY = 'salbarkain:pickupPass';
+const PICKUP_PASS_KEY = 'salbarkain_active_claim';
+const LEGACY_PICKUP_PASS_KEY = 'salbarkain:pickupPass';
 
 function readPickupPass() {
   try {
-    const pass = JSON.parse(localStorage.getItem(PICKUP_PASS_KEY) || 'null');
-    if (!pass?.qrToken || !pass?.pickupDeadline || new Date(pass.pickupDeadline).getTime() <= Date.now()) {
+    const pass = JSON.parse(localStorage.getItem(PICKUP_PASS_KEY) || localStorage.getItem(LEGACY_PICKUP_PASS_KEY) || 'null');
+    const deadline = new Date(pass?.pickupDeadline).getTime();
+    if (!pass?.qrToken || !Number.isFinite(deadline) || deadline <= Date.now()) {
       localStorage.removeItem(PICKUP_PASS_KEY);
+      localStorage.removeItem(LEGACY_PICKUP_PASS_KEY);
       return null;
     }
+    localStorage.setItem(PICKUP_PASS_KEY, JSON.stringify(pass));
     return pass;
   } catch { return null; }
 }
@@ -84,14 +88,28 @@ function AppShell() {
   const view = location.pathname === '/about' ? 'about' : location.pathname === '/how-it-works' ? 'how' : location.pathname === '/admin' ? 'admin' : location.pathname === '/login' ? 'login' : location.pathname === '/workspace' ? 'dashboard' : 'market';
   if (session?.token) api.defaults.headers.common.Authorization = `Bearer ${session.token}`; else delete api.defaults.headers.common.Authorization;
   useEffect(() => { if ((location.pathname === '/login' || location.pathname === '/admin') && !session) setLoginOpen(true); }, [location.pathname, session]);
+  useEffect(() => {
+    const timer = window.setInterval(() => {
+      setSavedPass(current => {
+        if (!current) return current;
+        const deadline = new Date(current.pickupDeadline).getTime();
+        if (Number.isFinite(deadline) && deadline > Date.now()) return current;
+        localStorage.removeItem(PICKUP_PASS_KEY);
+        localStorage.removeItem(LEGACY_PICKUP_PASS_KEY);
+        return null;
+      });
+    }, 1000);
+    return () => window.clearInterval(timer);
+  }, []);
   function handleLogin(data) { const next = { ...data.user, token: data.token }; api.defaults.headers.common.Authorization = `Bearer ${next.token}`; localStorage.setItem('salbarkain:auth', JSON.stringify(next)); setSession(next); setLoginOpen(false); setMobileMenuOpen(false); navigate(next.role === 'admin' ? '/admin' : '/workspace'); }
   function logout() { delete api.defaults.headers.common.Authorization; localStorage.removeItem('salbarkain:auth'); setSession(null); setMobileMenuOpen(false); navigate('/'); }
   async function submitClaim({ buyerName, phone, qty, safetyAcknowledged }) {
     try {
       const { data } = await api.post('/claims', { batchId: claimBatch._id || claimBatch.id, qty, buyerName, phone, deviceToken: getDeviceToken(), safetyAcknowledged });
       const claim = data.data.claim;
-      const pass = { id: claim.id, qrToken: claim.qrToken, batchId: claim.batchId, qty: claim.qty, priceAtClaim: claim.priceAtClaim, pickupDeadline: claim.pickupDeadline, status: claim.status, itemName: claimBatch.itemName, storeName: claimBatch.merchantId?.storeName, batch: claimBatch };
-      savePass(pass); setClaimBatch(null); setPickupPass(pass);
+      const coordinates = claimBatch.merchantId?.location?.coordinates || null;
+      const pass = { id: claim.id, qrToken: claim.qrToken, batchId: claim.batchId, qty: claim.qty, quantity: claim.qty, priceAtClaim: claim.priceAtClaim, totalPrice: Number((Number(claim.priceAtClaim || 0) * Number(claim.qty || 1)).toFixed(2)), pickupDeadline: claim.pickupDeadline, status: claim.status, itemName: claimBatch.itemName, storeName: claimBatch.merchantId?.storeName || 'Local food partner', storeAddress: claimBatch.merchantId?.address || '', coordinates, batch: claimBatch };
+      savePass(pass); setClaimBatch(null); setPickupPass(pass); setMarketRefresh(value => value + 1);
     } catch (error) {
       if (['BATCH_UNAVAILABLE', 'PICKUP_PASS_EXPIRED', 'BATCH_EXPIRED'].includes(error.response?.data?.code)) {
         setMarketRefresh(value => value + 1);
@@ -100,15 +118,16 @@ function AppShell() {
       throw error;
     }
   }
-  function savePass(pass) { localStorage.setItem(PICKUP_PASS_KEY, JSON.stringify(pass)); setSavedPass(pass); }
+  function savePass(pass) { localStorage.setItem(PICKUP_PASS_KEY, JSON.stringify(pass)); localStorage.removeItem(LEGACY_PICKUP_PASS_KEY); setSavedPass(pass); }
   return <div className="app-frame">
-    <header className="site-header"><Link className="brand" to="/">SalbarKain<span>.</span></Link><nav className="header-nav"><Link className={view === 'market' ? 'nav-link is-current' : 'nav-link'} to="/">Explore</Link><Link className={view === 'how' ? 'nav-link is-current' : 'nav-link'} to="/how-it-works">How it works</Link><Link className={view === 'about' ? 'nav-link is-current' : 'nav-link'} to="/about">About</Link><MealsSavedCounter /><div className="header-divider" />{session ? <><Link className="nav-link" to={session.role === 'admin' ? '/admin' : '/workspace'}>{session.role === 'merchant' ? 'Merchant workspace' : session.role === 'admin' ? 'Admin command center' : 'NGO workspace'}</Link><button className="text-button" onClick={() => setImpactOpen(true)}>My impact</button><button className="text-button" onClick={logout}>Sign out</button></> : <><button className="text-button" onClick={() => setImpactOpen(true)}>My impact</button><button className="primary-button compact" onClick={() => setLoginOpen(true)}>Merchant / NGO login</button></>}{savedPass && <button className="secondary-button compact" onClick={() => setPickupPass(savedPass)}>Pickup pass</button>}</nav><div className="mobile-count"><MealsSavedCounter /><button type="button" className="mobile-menu-toggle" aria-expanded={mobileMenuOpen} aria-controls="mobile-navigation" aria-label={mobileMenuOpen ? 'Close navigation menu' : 'Open navigation menu'} onClick={() => setMobileMenuOpen(open => !open)}><svg viewBox="0 0 24 24" aria-hidden="true"><path d={mobileMenuOpen ? 'M6 6l12 12M18 6L6 18' : 'M4 6h16M4 12h16M4 18h16'} /></svg></button>{mobileMenuOpen && <nav className="mobile-menu" id="mobile-navigation" aria-label="Mobile navigation"><Link to="/" onClick={() => setMobileMenuOpen(false)}>Explore</Link><Link to="/how-it-works" onClick={() => setMobileMenuOpen(false)}>How it works</Link><Link to="/about" onClick={() => setMobileMenuOpen(false)}>About</Link>{session ? <><Link to={session.role === 'admin' ? '/admin' : '/workspace'} onClick={() => setMobileMenuOpen(false)}>{session.role === 'admin' ? 'Admin command center' : session.role === 'merchant' ? 'Merchant workspace' : 'NGO workspace'}</Link><button type="button" onClick={() => { setMobileMenuOpen(false); setImpactOpen(true); }}>My impact</button><button type="button" onClick={logout}>Sign out</button></> : <><button type="button" onClick={() => { setMobileMenuOpen(false); setImpactOpen(true); }}>My impact</button><button className="primary-button" type="button" onClick={() => { setMobileMenuOpen(false); setLoginOpen(true); }}>Merchant / NGO login</button></>}{savedPass && <button type="button" onClick={() => { setMobileMenuOpen(false); setPickupPass(savedPass); }}>Pickup pass</button>}</nav>}</div></header>
+    <header className="site-header"><Link className="brand" to="/">SalbarKain<span>.</span></Link><nav className="header-nav"><Link className={view === 'market' ? 'nav-link is-current' : 'nav-link'} to="/">Explore</Link><Link className={view === 'how' ? 'nav-link is-current' : 'nav-link'} to="/how-it-works">How it works</Link><Link className={view === 'about' ? 'nav-link is-current' : 'nav-link'} to="/about">About</Link><MealsSavedCounter /><div className="header-divider" />{session ? <><Link className="nav-link" to={session.role === 'admin' ? '/admin' : '/workspace'}>{session.role === 'merchant' ? 'Merchant workspace' : session.role === 'admin' ? 'Admin command center' : 'NGO workspace'}</Link><button className="text-button" onClick={() => setImpactOpen(true)}>My impact</button><button className="text-button" onClick={logout}>Sign out</button></> : <><button className="text-button" onClick={() => setImpactOpen(true)}>My impact</button><button className="primary-button compact" onClick={() => setLoginOpen(true)}>Merchant / NGO login</button></>}{savedPass && <button className="secondary-button compact" onClick={() => setPickupPass(savedPass)}>My Active QR Pass</button>}</nav><div className="mobile-count"><MealsSavedCounter /><button type="button" className="mobile-menu-toggle" aria-expanded={mobileMenuOpen} aria-controls="mobile-navigation" aria-label={mobileMenuOpen ? 'Close navigation menu' : 'Open navigation menu'} onClick={() => setMobileMenuOpen(open => !open)}><svg viewBox="0 0 24 24" aria-hidden="true"><path d={mobileMenuOpen ? 'M6 6l12 12M18 6L6 18' : 'M4 6h16M4 12h16M4 18h16'} /></svg></button>{mobileMenuOpen && <nav className="mobile-menu" id="mobile-navigation" aria-label="Mobile navigation"><Link to="/" onClick={() => setMobileMenuOpen(false)}>Explore</Link><Link to="/how-it-works" onClick={() => setMobileMenuOpen(false)}>How it works</Link><Link to="/about" onClick={() => setMobileMenuOpen(false)}>About</Link>{session ? <><Link to={session.role === 'admin' ? '/admin' : '/workspace'} onClick={() => setMobileMenuOpen(false)}>{session.role === 'admin' ? 'Admin command center' : session.role === 'merchant' ? 'Merchant workspace' : 'NGO workspace'}</Link><button type="button" onClick={() => { setMobileMenuOpen(false); setImpactOpen(true); }}>My impact</button><button type="button" onClick={logout}>Sign out</button></> : <><button type="button" onClick={() => { setMobileMenuOpen(false); setImpactOpen(true); }}>My impact</button><button className="primary-button" type="button" onClick={() => { setMobileMenuOpen(false); setLoginOpen(true); }}>Merchant / NGO login</button></>}{savedPass && <button type="button" onClick={() => { setMobileMenuOpen(false); setPickupPass(savedPass); }}>My Active QR Pass</button>}</nav>}</div></header>
     {view === 'admin' ? session?.role === 'admin' ? <Suspense fallback={<main className="dashboard-shell"><p className="loading-line">Opening the admin command center…</p></main>}><AdminQueue session={session} onNotice={setNotice} /></Suspense> : <main className="dashboard-shell"><section className="panel"><h1>Admin access required</h1><p className="panel-subtitle">Sign in with an administrator account to open this command center.</p><button className="primary-button" onClick={() => setLoginOpen(true)}>Sign in</button></section></main> : view === 'dashboard' && session ? <Suspense fallback={<main className="dashboard-shell"><p className="loading-line">Opening your partner workspace…</p></main>}><PartnerDashboardPage session={session} onBrowse={() => navigate('/')} onNotice={setNotice} onSavePass={savePass} /></Suspense> : view === 'how' ? <HowItWorksPage /> : view === 'about' ? <AboutPage /> : <MarketplacePage session={session} onClaim={setClaimBatch} onPartnerSignIn={() => setLoginOpen(true)} onNotice={setNotice} refreshTrigger={marketRefresh} />}
+    {savedPass && <button type="button" className="active-pass-fab" onClick={() => setPickupPass(savedPass)}>My Active QR Pass</button>}
     <footer className="site-footer"><span>SalbarKain</span><span>Local surplus food rescue · Find partners near you</span><span className="footer-device">No buyer account required</span></footer>
     {loginOpen && <AuthModal onClose={() => setLoginOpen(false)} onLogin={handleLogin} />}
     {impactOpen && <MyImpactModal session={session} onClose={() => setImpactOpen(false)} />}
     {claimBatch && <ClaimDrawer batch={claimBatch} onClose={() => setClaimBatch(null)} onSubmit={submitClaim} />}
-    {pickupPass && <QrPassModal pass={pickupPass} onClose={(result) => { setPickupPass(null); if (result?.cancelled) { localStorage.removeItem(PICKUP_PASS_KEY); setSavedPass(null); setMarketRefresh(value => value + 1); setNotice('Pickup cancelled. The portions are back in the marketplace.'); } }} />}
+    {pickupPass && <QrPassModal pass={pickupPass} onClose={(result) => { setPickupPass(null); if (result?.cancelled) { localStorage.removeItem(PICKUP_PASS_KEY); localStorage.removeItem(LEGACY_PICKUP_PASS_KEY); setSavedPass(null); setMarketRefresh(value => value + 1); setNotice('Pickup cancelled. The portions are back in the marketplace.'); } }} />}
     {notice && <div className="toast" role="status">{notice}<button onClick={() => setNotice('')} aria-label="Dismiss">×</button></div>}
   </div>;
 }

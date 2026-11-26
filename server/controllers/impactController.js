@@ -36,11 +36,16 @@ async function exportImpactCsv(req, res) {
 
 async function myImpact(req, res) {
   let match;
-  if (req.user?.role === 'merchant') match = { merchantId: req.user.id, status: 'completed' };
+  if (req.method === 'GET') {
+    const phone = req.query?.phone ? normalizePhone(req.query.phone) : null;
+    const deviceToken = req.query?.deviceToken;
+    if (typeof deviceToken !== 'string' || !/^[a-zA-Z0-9-]{16,100}$/.test(deviceToken) || !phone) throw httpError(400, 'IMPACT_ID_REQUIRED', 'A valid phone number and this device are required to view personal rescue stats.');
+    match = { status: 'completed', phone, deviceToken };
+  } else if (req.user?.role === 'merchant') match = { merchantId: req.user.id, status: 'completed' };
   else {
-    const rawPhone = req.user?.role === 'ngo' ? await User.findById(req.user.id).select('phone').then(user => user?.phone) : req.body?.phone;
+    const rawPhone = req.user?.role === 'ngo' ? await User.findById(req.user.id).select('phone').then(user => user?.phone) : req.method === 'GET' ? req.query?.phone : req.body?.phone;
     const phone = rawPhone ? normalizePhone(rawPhone) : null;
-    const deviceToken = req.body?.deviceToken;
+    const deviceToken = req.method === 'GET' ? req.query?.deviceToken : req.body?.deviceToken;
     if (req.user?.role === 'ngo') {
       if (!phone) throw httpError(400, 'IMPACT_ID_REQUIRED', 'Add a mobile number to your organization account to view rescue stats.');
       match = { status: 'completed', phone };
