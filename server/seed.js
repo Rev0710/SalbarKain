@@ -122,7 +122,19 @@ async function seed() {
   const admin = await upsertDemoUser('demo.admin@salbarkain.test', {
     role: 'admin', name: 'SalbarKain Demo Admin', passwordHash,
     address: 'Iloilo City, Iloilo', barangay: 'Unspecified', municipality: 'Iloilo City', location: { type: 'Point', coordinates: [122.562, 10.72] },
-    verified: true, verificationStatus: 'verified',
+    assignedMunicipality: 'ALL', verified: true, verificationStatus: 'verified',
+  });
+  const provincialAdmin = await upsertDemoUser('admin@salbarkain.ph', {
+    role: 'admin', name: 'Iloilo Provincial Super-Admin', passwordHash,
+    address: 'Iloilo City, Iloilo', barangay: 'City Proper', municipality: 'Iloilo City',
+    location: { type: 'Point', coordinates: [122.55, 10.745] },
+    assignedMunicipality: 'ALL', verified: true, verificationStatus: 'verified',
+  });
+  const paviaAdmin = await upsertDemoUser('pavia.lgu@salbarkain.ph', {
+    role: 'admin', name: 'Pavia Municipal LGU Admin', passwordHash,
+    address: 'Poblacion, Pavia, Iloilo', barangay: 'Poblacion', municipality: 'Pavia',
+    location: { type: 'Point', coordinates: [122.53703, 10.77197] },
+    assignedMunicipality: 'Pavia', verified: true, verificationStatus: 'verified',
   });
   const pendingApplicant = await upsertDemoUser('demo.pending@salbarkain.test', {
     role: 'merchant', name: 'Pending Demo Applicant', passwordHash,
@@ -172,6 +184,8 @@ async function seed() {
   console.log('Merchants:', demoMerchants.map(({ landmark }) => landmark.email).join(', '));
   console.log('Verified NGO:', ngo.email);
   console.log('Admin:', admin.email);
+  console.log('Provincial Super-Admin:', provincialAdmin.email);
+  console.log('Pavia Municipal Admin:', paviaAdmin.email);
   console.log('Pending applicant:', pendingApplicant.email);
   console.log('Local demo password: the value configured in SEED_PASSWORD');
 }

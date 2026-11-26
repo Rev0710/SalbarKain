@@ -15,9 +15,24 @@ function FitBatches({ batches }) {
   return null;
 }
 
+function RefreshMapSize() {
+  const map = useMap();
+  useEffect(() => {
+    const container = map.getContainer();
+    const refresh = () => requestAnimationFrame(() => map.invalidateSize({ pan: false }));
+    const observer = typeof ResizeObserver === 'undefined' ? null : new ResizeObserver(refresh);
+    observer?.observe(container);
+    window.addEventListener('resize', refresh);
+    refresh();
+    return () => { observer?.disconnect(); window.removeEventListener('resize', refresh); };
+  }, [map]);
+  return null;
+}
+
 export default function BatchMap({ batches, onSelect }) {
   return <section className="map-panel" aria-label="Surplus food map"><MapContainer center={ILOILO_CENTER} zoom={13} {...ILOILO_MAP_OPTIONS} scrollWheelZoom={false} preferCanvas>
     <TileLayer attribution='&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors' url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png" />
+    <RefreshMapSize />
     <FitBatches batches={batches} />
     {batches.map(batch => {
       const coordinates = batch.merchantId?.location?.coordinates;

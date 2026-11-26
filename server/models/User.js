@@ -24,7 +24,11 @@ const userSchema = new Schema({
   organizationName: { type: String, trim: true, maxlength: 160, required() { return this.role === 'ngo'; } },
   // `verified` remains for existing account compatibility; new KYB uses verificationStatus.
   verified: { type: Boolean, default: false },
-  verificationStatus: { type: String, enum: ['pending', 'verified', 'rejected'], default: 'pending', index: true },
+  verificationStatus: { type: String, enum: ['pending', 'verified', 'rejected', 'suspended'], default: 'pending', index: true },
+  assignedMunicipality: { type: String, trim: true, maxlength: 100, default() { return this.role === 'admin' ? 'ALL' : undefined; }, index: true },
+  verifiedBy: { type: Schema.Types.ObjectId, ref: 'User', default: null },
+  verifiedAt: { type: Date, default: null },
+  rejectionReason: { type: String, trim: true, maxlength: 300, select: false },
   verificationDocPublicId: { type: String, select: false },
   verificationDocFormat: { type: String, select: false },
   storefrontPhotoUrl: { type: String, trim: true },

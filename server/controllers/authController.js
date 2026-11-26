@@ -21,6 +21,7 @@ function publicUser(user) {
     storefrontPhotoUrl: user.storefrontPhotoUrl,
     barangay: user.barangay || 'Unspecified',
     municipality: user.municipality || 'Unspecified',
+    assignedMunicipality: user.role === 'admin' ? (user.assignedMunicipality || 'ALL') : undefined,
   };
 }
 
