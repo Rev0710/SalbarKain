@@ -6,6 +6,11 @@ const httpError = require('../utils/httpError');
 const { batchCache, BATCH_CACHE_PREFIX, invalidateBatchCache } = require('../utils/cache');
 const { hashIdentifier } = require('../utils/authAudit');
 
+function normalizeDemoPhotoUrl(photoUrl) {
+  if (typeof photoUrl !== 'string') return photoUrl;
+  return photoUrl.replace(/^https?:\/\/localhost(?::\d+)?\/demo-images\//i, '/demo-images/');
+}
+
 function parseBatchBody(body) {
   const itemName = typeof body.itemName === 'string' ? body.itemName.trim() : '';
   const quantity = Number(body.quantity);
@@ -212,7 +217,6 @@ async function listBatches(req, res) {
 
       const merchantIds = nearbyMerchants.map((merchant) => merchant._id);
       merchantRanks = new Map(merchantIds.map((id, index) => [id.toString(), index]));
-      filter.merchantId = { $in: merchantIds };
     }
 
     batches = await Batch.find(filter)
@@ -224,9 +228,11 @@ async function listBatches(req, res) {
     batches = batches.filter((batch) => batch.merchantId && (batch.merchantId.verificationStatus === 'verified' || batch.merchantId.verified === true));
 
     if (merchantRanks) {
-      batches.sort((left, right) =>
-        merchantRanks.get(left.merchantId._id.toString()) - merchantRanks.get(right.merchantId._id.toString())
-        || new Date(left.expiresAt) - new Date(right.expiresAt));
+      batches.sort((left, right) => {
+        const leftRank = merchantRanks.get(left.merchantId._id.toString()) ?? Number.MAX_SAFE_INTEGER;
+        const rightRank = merchantRanks.get(right.merchantId._id.toString()) ?? Number.MAX_SAFE_INTEGER;
+        return leftRank - rightRank || new Date(left.expiresAt) - new Date(right.expiresAt);
+      });
       batches = batches.slice(0, pageSize);
     }
     batchCache.set(key, batches);
@@ -239,23 +245,23 @@ async function listBatches(req, res) {
     && new Date(batch.expiresAt).getTime() > currentTime
     && new Date(batch.safeUntil || batch.expiresAt).getTime() > currentTime).map((batch) => {
       const flashActive = batch.isFlashDropEnabled && new Date(batch.expiresAt).getTime() - currentTime <= 30 * 60 * 1000;
-      return { ...batch, flashActive, flashPrice: flashActive ? Number((Number(batch.price || 0) * 0.5).toFixed(2)) : null, flashFreeForNgo: Boolean(flashActive && !batch.isDonationOnly) };
+    return { ...batch, photoUrl: normalizeDemoPhotoUrl(batch.photoUrl), flashActive, flashPrice: flashActive ? Number((Number(batch.price || 0) * 0.5).toFixed(2)) : null, flashFreeForNgo: Boolean(flashActive && !batch.isDonationOnly) };
     });
-  res.status(200).json({ success: true, data: { batches: visible } });
+  res.set('Cache-Control', 'no-store').status(200).json({ success: true, data: { batches: visible } });
 }
 
 async function listMyBatches(req, res) {
-  const batches = await Batch.find({ merchantId: req.user.id })
+  const batches = (await Batch.find({ merchantId: req.user.id })
     .sort({ createdAt: -1 })
-    .lean();
+    .lean()).map((batch) => ({ ...batch, photoUrl: normalizeDemoPhotoUrl(batch.photoUrl) }));
   res.status(200).json({ success: true, data: { batches } });
 }
 
 async function listMyHistory(req, res) {
-  const batches = await Batch.find({ merchantId: req.user.id, status: { $nin: ['withdrawn', 'flagged'] } })
+  const batches = (await Batch.find({ merchantId: req.user.id, status: { $nin: ['withdrawn', 'flagged'] } })
     .sort({ createdAt: -1 }).limit(20)
     .select('itemName photoUrl photoPublicId price isDonationOnly storageType consumeWithin allergens keyIngredients ngoPriorityUntil createdAt')
-    .lean();
+    .lean()).map((batch) => ({ ...batch, photoUrl: normalizeDemoPhotoUrl(batch.photoUrl) }));
   res.status(200).json({ success: true, data: { batches } });
 }
 

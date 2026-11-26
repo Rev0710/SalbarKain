@@ -10,7 +10,7 @@ export default function BatchCard({ batch, isNgo, onClaim, onSignIn, onReport })
   const shownPrice = flashActive ? Number((Number(batch.price || 0) * 0.5).toFixed(2)) : Number(batch.price);
   const disabled = time === '00:00';
   return <article className="batch-card">
-    <img className="batch-card-photo" src={batch.photoUrl} alt={batch.itemName} loading="lazy" />
+    <img className="batch-card-photo" src={batch.photoUrl} alt={batch.itemName} loading="lazy" onError={event => { event.currentTarget.onerror = null; event.currentTarget.src = '/demo-images/pandesal.svg'; }} />
     <div className="batch-card-info">
       <div className="batch-item"><h2 title={batch.itemName}>{batch.isMagicBayong ? `Surprise Magic Bayong` : batch.itemName}</h2><p title={batch.merchantId?.storeName}>{batch.merchantId?.storeName || 'Local food partner'}</p></div>
       <div className="batch-bottom"><div className="batch-price">{free || (flashActive && isNgo) ? <span className="free-badge">Free for NGOs</span> : <>{flashActive && <span className="flash-badge">Flash Drop</span>}{batch.originalPrice != null && <del className="text-muted mr-1">₱{Number(batch.originalPrice).toFixed(2)}</del>}₱{shownPrice.toFixed(2)}</>}</div><div className="urgency-action"><span className="countdown" aria-label={`${time} until pickup cutoff`}>{time}</span><button className="claim-button" disabled={disabled} onClick={() => onClaim(batch)}>{disabled ? 'Closed' : free && !isNgo ? 'NGO sign-in' : 'Claim batch'}</button></div></div>

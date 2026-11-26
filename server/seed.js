@@ -170,7 +170,7 @@ async function seed() {
           retailValue: null,
           ngoPriorityUntil: null,
           expiresAt: new Date(now + batch.pickupHours * 60 * 60 * 1000),
-          photoUrl: `http://localhost:5173/demo-images/${batch.photo}`,
+          photoUrl: `/demo-images/${batch.photo}`,
           status: 'active',
           reportCount: 0,
           reportedByDevices: [],

@@ -12,7 +12,7 @@ export default function MarketplacePage({ session, onClaim, onPartnerSignIn, onN
   const [origin, setOrigin] = useState(null); const [locationMessage, setLocationMessage] = useState('');
   const refresh = useCallback(async (signal, point) => {
     setLoading(true); setError('');
-    try { const params = point ? { lat: point.lat, lng: point.lng, radius: 50000, limit: 50 } : { limit: 100 }; const { data } = await api.get('/batches', { params, signal }); setBatches(data.data.batches || []); }
+    try { const params = point ? { lat: point.lat, lng: point.lng, radius: 50000, limit: 50 } : { limit: 100 }; const { data } = await api.get('/batches', { params, signal }); setBatches(Array.isArray(data?.data?.batches) ? data.data.batches : []); }
     catch (err) { if (err.code !== 'ERR_CANCELED') setError(err.response?.data?.message || 'The live marketplace is unavailable. Try again shortly.'); }
     finally { setLoading(false); }
   }, []);
