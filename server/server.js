@@ -11,6 +11,8 @@ const authRoutes = require('./routes/authRoutes');
 const batchRoutes = require('./routes/batchRoutes');
 const claimRoutes = require('./routes/claimRoutes');
 const statsRoutes = require('./routes/statsRoutes');
+const adminRoutes = require('./routes/adminRoutes');
+const impactRoutes = require('./routes/impactRoutes');
 const errorHandler = require('./middleware/errorHandler');
 const securityAudit = require('./middleware/securityAudit');
 const notFound = require('./middleware/notFound');
@@ -58,6 +60,8 @@ app.use('/api/auth', authRoutes);
 app.use('/api/batches', batchRoutes);
 app.use('/api/claims', claimRoutes);
 app.use('/api/stats', statsRoutes);
+app.use('/api/admin', adminRoutes);
+app.use('/api/impact', impactRoutes);
 app.use(notFound);
 app.use(errorHandler);
 

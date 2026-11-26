@@ -26,12 +26,13 @@ if (!testUri) {
   const Batch = require('../models/Batch');
   const Claim = require('../models/Claim');
   const AuthLog = require('../models/AuthLog');
+  const ImpactEntry = require('../models/ImpactEntry');
   const { signAccessToken } = require('../utils/jwt');
   const { hashIdentifier } = require('../utils/authAudit');
 
   test('atomic claims, QR ownership and expiry, abuse logging, rate limits, and upload caps', async (t) => {
     await mongoose.connect(testUri);
-    await Promise.all([User.createIndexes(), Batch.createIndexes(), Claim.createIndexes(), AuthLog.createIndexes()]);
+    await Promise.all([User.createIndexes(), Batch.createIndexes(), Claim.createIndexes(), AuthLog.createIndexes(), ImpactEntry.createIndexes()]);
     const server = app.listen(0, '127.0.0.1');
     await new Promise((resolve, reject) => { server.once('listening', resolve); server.once('error', reject); });
     const base = `http://127.0.0.1:${server.address().port}`;
@@ -48,18 +49,18 @@ if (!testUri) {
       return { status: response.status, body };
     };
     const createMerchant = async (tag) => {
-      const user = await User.create({ role: 'merchant', name: `Integration ${tag}`, email: `integration-${tag}-${Date.now()}@test.invalid`, passwordHash: testPasswordHash, storeName: `Integration shop ${tag}`, category: 'bakery', address: 'Integration test location, Iloilo City', location: { type: 'Point', coordinates: [122.56, 10.72] } });
+      const user = await User.create({ role: 'merchant', name: `Integration ${tag}`, email: `integration-${tag}-${Date.now()}@test.invalid`, passwordHash: testPasswordHash, storeName: `Integration shop ${tag}`, category: 'bakery', address: 'Integration test location, Iloilo City', location: { type: 'Point', coordinates: [122.56, 10.72] }, verified: true, verificationStatus: 'verified' });
       createdUserIds.push(user._id);
       return { user, token: signAccessToken(user) };
     };
     const createBatch = async (merchant, tag, quantity) => {
-      const batch = await Batch.create({ merchantId: merchant._id, photoUrl: 'https://res.cloudinary.com/salbar-kain-test/image/upload/test.jpg', itemName: `Integration ${tag}`, quantity, remainingQty: quantity, price: 10, isDonationOnly: false, expiresAt: new Date(Date.now() + 60 * 60 * 1000), status: 'active' });
+    const batch = await Batch.create({ merchantId: merchant._id, photoUrl: 'https://res.cloudinary.com/salbar-kain-test/image/upload/test.jpg', itemName: `Integration ${tag}`, quantity, remainingQty: quantity, price: 10, isDonationOnly: false, storageType: 'room_temp_baked', consumeWithin: 'tonight', allergens: ['None / Allergen-Free'], expiresAt: new Date(Date.now() + 60 * 60 * 1000), safeUntil: new Date(Date.now() + 2 * 60 * 60 * 1000), freshnessAttested: true, status: 'active' });
       createdBatchIds.push(batch._id);
       return batch;
     };
     const guestClaim = (batchId, index, ip) => requestJson('/api/claims', {
       ip, method: 'POST', headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ batchId: batchId.toString(), qty: 1, buyerName: `Test Buyer ${index}`, phone: `0917${String(1000000 + index).padStart(7, '0')}`, deviceToken: `test-device-${Date.now()}-${index}` }),
+      body: JSON.stringify({ batchId: batchId.toString(), qty: 1, buyerName: `Test Buyer ${index}`, phone: `0917${String(1000000 + index).padStart(7, '0')}`, deviceToken: `test-device-${Date.now()}-${index}`, safetyAcknowledged: true }),
     });
 
     try {
@@ -84,6 +85,10 @@ if (!testUri) {
         const correctScan = await requestJson(`/api/claims/${wrongMerchantClaim.body.data.claim.qrToken}/verify`, { method: 'PATCH', headers: { authorization: `Bearer ${owner.token}` }, ip: '198.51.100.2' });
         assert.equal(correctScan.status, 200);
         assert.equal(correctScan.body.data.claim.status, 'completed');
+        const ledgerEntry = await ImpactEntry.findOne({ claimId: wrongMerchantClaim.body.data.claim.id }).lean();
+        assert.equal(ledgerEntry.quantity, 1);
+        assert.equal(ledgerEntry.foodKg, 0.5);
+        assert.equal(ledgerEntry.co2eKg, 1.25);
 
         const expiredBatch = await createBatch(owner.user, 'expired pass', 1);
         const expiredClaim = await guestClaim(expiredBatch._id, 21, '198.51.100.3');
@@ -99,6 +104,50 @@ if (!testUri) {
         const expiredAuth = await requestJson('/api/batches/mine', { headers: { authorization: `Bearer ${expiredJwt}` }, ip: '198.51.100.3' });
         assert.equal(expiredAuth.status, 401);
         assert.equal(expiredAuth.body.code, 'INVALID_TOKEN');
+      });
+
+      await t.test('unverified merchants cannot post and donation batches are visible but NGO-only', async () => {
+        const applicant = await User.create({ role: 'merchant', name: 'Pending applicant', email: `pending-${Date.now()}@test.invalid`, passwordHash: testPasswordHash, storeName: 'Pending shop', category: 'bakery', address: 'Pending test address, Iloilo City', location: { type: 'Point', coordinates: [122.56, 10.72] }, verificationStatus: 'pending' });
+        createdUserIds.push(applicant._id);
+        const denied = await requestJson('/api/batches', { method: 'POST', headers: { authorization: `Bearer ${signAccessToken(applicant)}` }, ip: '198.51.100.11' });
+        assert.equal(denied.status, 403);
+        assert.equal(denied.body.code, 'VERIFICATION_REQUIRED');
+
+        const merchant = await createMerchant('donation');
+        const donation = await Batch.create({ merchantId: merchant.user._id, photoUrl: 'https://res.cloudinary.com/salbar-kain-test/image/upload/test.jpg', itemName: 'Integration free meal', quantity: 3, remainingQty: 3, price: 0, isDonationOnly: true, storageType: 'refrigerated_cooked', consumeWithin: 'tonight', allergens: ['None / Allergen-Free'], expiresAt: new Date(Date.now() + 60 * 60 * 1000), safeUntil: new Date(Date.now() + 2 * 60 * 60 * 1000), freshnessAttested: true, status: 'active' });
+        createdBatchIds.push(donation._id);
+        const listed = await requestJson('/api/batches?lat=10.72&lng=122.56&radius=50000&limit=50', { ip: '198.51.100.12' });
+        assert.ok(listed.body.data.batches.some((batch) => batch._id === donation._id.toString()), 'public marketplace must show free donation listings');
+        const blocked = await guestClaim(donation._id, 88, '198.51.100.13');
+        assert.equal(blocked.status, 403);
+        assert.equal(blocked.body.code, 'NGO_VERIFICATION_REQUIRED');
+
+        const tokens = [];
+        for (let index = 0; index < 3; index += 1) {
+          const response = await requestJson(`/api/batches/${donation._id}/report`, { method: 'PATCH', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ deviceToken: `integration-device-${Date.now()}-${index}` }), ip: `198.51.100.${20 + index}` });
+          assert.equal(response.status, 200);
+          tokens.push(response.body.data);
+        }
+        assert.equal(tokens[2].hidden, true, 'the third unique report should hide the listing');
+        assert.equal((await Batch.findById(donation._id)).status, 'flagged');
+      });
+
+      await t.test('NGO priority batches open to verified NGOs first, then to other buyers', async () => {
+        const merchant = await createMerchant('priority');
+        const batch = await Batch.create({ merchantId: merchant.user._id, photoUrl: 'https://res.cloudinary.com/salbar-kain-test/image/upload/test.jpg', itemName: 'Integration priority meal', quantity: 3, remainingQty: 3, price: 20, isDonationOnly: false, storageType: 'refrigerated_cooked', consumeWithin: '2_hours', allergens: ['Dairy'], ngoPriorityUntil: new Date(Date.now() + 15 * 60 * 1000), expiresAt: new Date(Date.now() + 60 * 60 * 1000), safeUntil: new Date(Date.now() + 2 * 60 * 60 * 1000), freshnessAttested: true, status: 'active' });
+        createdBatchIds.push(batch._id);
+        const guestDuringWindow = await guestClaim(batch._id, 97, '198.51.100.30');
+        assert.equal(guestDuringWindow.status, 403);
+        assert.equal(guestDuringWindow.body.code, 'NGO_PRIORITY_ACTIVE');
+
+        const ngo = await User.create({ role: 'ngo', name: 'Integration NGO', email: `ngo-${Date.now()}@test.invalid`, passwordHash: testPasswordHash, organizationName: 'Integration Pantry', address: 'Integration NGO location, Iloilo City', location: { type: 'Point', coordinates: [122.56, 10.72] }, verified: true, verificationStatus: 'verified' });
+        createdUserIds.push(ngo._id);
+        const ngoClaim = await requestJson('/api/claims', { method: 'POST', ip: '198.51.100.31', headers: { authorization: `Bearer ${signAccessToken(ngo)}`, 'content-type': 'application/json' }, body: JSON.stringify({ batchId: batch._id.toString(), qty: 1, buyerName: 'Integration NGO contact', phone: '09179991111', deviceToken: `priority-ngo-${Date.now()}`, safetyAcknowledged: true }) });
+        assert.equal(ngoClaim.status, 201);
+
+        await Batch.updateOne({ _id: batch._id }, { $set: { ngoPriorityUntil: new Date(Date.now() - 1000) } });
+        const guestAfterWindow = await guestClaim(batch._id, 98, '198.51.100.32');
+        assert.equal(guestAfterWindow.status, 201);
       });
 
       await t.test('NoSQL and SQL-like probes are detected without logging credential values', async () => {
@@ -156,6 +205,7 @@ if (!testUri) {
       });
     } finally {
       await Claim.deleteMany({ merchantId: { $in: createdUserIds } });
+      await ImpactEntry.deleteMany({ merchantId: { $in: createdUserIds } });
       await Batch.deleteMany({ _id: { $in: createdBatchIds } });
       await User.deleteMany({ _id: { $in: createdUserIds } });
       await new Promise((resolve) => server.close(resolve));

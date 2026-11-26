@@ -26,12 +26,12 @@ function authenticate(req, _res, next) {
     return next(httpError(401, 'INVALID_TOKEN', 'Your session is invalid. Sign in again.'));
   }
 
-  if (typeof payload.sub !== 'string' || !['merchant', 'ngo'].includes(payload.role)) {
+  if (typeof payload.sub !== 'string' || !['merchant', 'ngo', 'admin'].includes(payload.role)) {
     return next(httpError(401, 'INVALID_TOKEN', 'Your session is invalid. Sign in again.'));
   }
 
   User.findById(payload.sub)
-    .select('role name email storeName organizationName verified')
+    .select('role name email storeName organizationName verified verificationStatus storefrontPhotoUrl barangay municipality')
     .lean()
     .then((user) => {
       if (!user || user.role !== payload.role) {
@@ -44,11 +44,22 @@ function authenticate(req, _res, next) {
         email: user.email,
         storeName: user.storeName,
         organizationName: user.organizationName,
-        verified: user.verified,
+        verified: user.verificationStatus === 'verified' || user.verified === true,
+        verificationStatus: user.verified ? 'verified' : (user.verificationStatus || 'pending'),
+        storefrontPhotoUrl: user.storefrontPhotoUrl,
+        barangay: user.barangay || 'Unspecified',
+        municipality: user.municipality || 'Unspecified',
       };
       return next();
     })
     .catch(next);
+}
+
+function requireVerified(req, _res, next) {
+  if (!req.user || !(req.user.verificationStatus === 'verified' || req.user.verified)) {
+    return next(httpError(403, 'VERIFICATION_REQUIRED', 'A verified partner account is required to perform this action.'));
+  }
+  next();
 }
 
 function optionalAuth(req, res, next) {
@@ -65,4 +76,4 @@ function authorizeRoles(...roles) {
   };
 }
 
-module.exports = { authenticate, optionalAuth, authorizeRoles };
+module.exports = { authenticate, optionalAuth, authorizeRoles, requireVerified };

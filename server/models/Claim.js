@@ -6,9 +6,12 @@ const claimSchema = new Schema({
   batchId: { type: Schema.Types.ObjectId, ref: 'Batch', required: true, index: true },
   merchantId: { type: Schema.Types.ObjectId, ref: 'User', required: true, index: true },
   qty: { type: Number, required: true, min: 1, validate: Number.isInteger },
+  priceAtClaim: { type: Number, min: 0, default: 0 },
+  estimatedSavings: { type: Number, min: 0, default: 0 },
   buyerName: { type: String, required: true, trim: true, maxlength: 100 },
   deviceToken: { type: String, required: true, trim: true, maxlength: 100, select: false },
   phone: { type: String, required: true, trim: true, maxlength: 24, select: false },
+  safetyAcknowledged: { type: Boolean, required: true, default: false },
   pickupDeadline: { type: Date, required: true, index: true },
   status: { type: String, enum: ['pending', 'completed', 'expired', 'cancelled'], default: 'pending', required: true, index: true },
 }, { timestamps: true, strict: 'throw' });

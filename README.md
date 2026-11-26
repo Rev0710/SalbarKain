@@ -17,14 +17,22 @@ Never commit `.env` files. Create an Atlas Shared M0 cluster and database user. 
 
 ## API routes
 
-- `POST /api/auth/register` — creates only a `merchant` or `ngo` account; NGOs start unverified.
+- `POST /api/auth/register` — multipart KYB application for only `merchant` or `ngo`; permit upload is private and the account starts pending. Merchants and NGOs provide a street address, barangay, municipality/city, and map-selected GeoJSON point.
 - `POST /api/auth/login` — returns a 7-day bearer JWT.
-- `POST /api/batches` — merchant-only multipart upload with a `photo` image and batch fields.
-- `GET /api/batches?lat=...&lng=...` — active nearby batches, ordered by merchant distance; without coordinates, batches sort by pickup cutoff.
-- `POST /api/claims` — guest claim with `batchId`, `qty`, `buyerName`, `phone`, and `deviceToken`; returns the QR token and 45-minute pickup deadline.
-- `PATCH /api/claims/:qrToken/verify` — merchant-only pickup verification.
+- `PATCH /api/auth/verification` — authenticated pending/rejected partners can submit or replace permit documents for review.
+- `POST /api/batches` — verified-merchant-only multipart upload with a freshness attestation, a safe-until time, storage/allergen tags, optional 15-minute NGO priority, dynamic last-30-minute flash discount, Magic Bayong metadata, or an owned `restockBatchId`.
+- `GET /api/batches/my-history` — verified merchant’s previous batches for one-click photo/tag restocking.
+- `GET /api/batches?lat=...&lng=...` — active nearby batches, including free NGO-only donations; claims on those donations remain restricted to verified NGOs.
+- `PATCH /api/batches/:id/report` — pseudonymized general reports (hidden after 3 unique devices) or spoilage reports (hidden after 2); hidden listings appear in the admin review queue.
+- `POST /api/claims` — guest or verified NGO claim with `batchId`, `qty`, `buyerName`, `phone`, `deviceToken`, and required safety acknowledgement; returns the QR token and 45-minute pickup deadline.
+- `PATCH /api/claims/:qrToken/verify` — verified merchant-only pickup verification; completion and impact ledger entry are atomic.
 - `GET /api/stats/meals-saved` — completed pickup portions for the live navbar count.
+- `GET /api/stats/impact?municipality=...&barangay=...` — global or area-filtered meal packs rescued, food kilograms saved, and CO₂e diverted.
+- `GET /api/impact/export?municipality=...&barangay=...` — admin-only CSV export for MENRO reporting, with optional exact municipality and barangay filters.
+- `POST /api/impact/mine` — returns a role-specific rescue tier and savings totals; guest lookups require both the saved phone and device token.
+- `GET /api/impact/heatmap?municipality=...&barangay=...` — admin-only rescue and current surplus points with optional area filters.
 - `GET /api/health` — API and configuration status.
+- `/api/admin/verifications` and `/api/admin/flagged-batches` — admin-only review queues; permit links are short-lived and admin-only.
 
 Auth requests are limited to 10 per IP per 15 minutes. Claim and verification requests are limited to 5 per IP per 15 minutes. A pending claim is unique by device token and normalized Philippine mobile number. The stock decrement and claim insert run in one MongoDB transaction; partial unique indexes enforce the one-pending-claim rule. Every 60 seconds, the worker expires unredeemed claims and restores their stock, then marks past-cutoff active or sold-out batches expired.
 
@@ -36,7 +44,11 @@ Set `SEED_PASSWORD` in `server/.env` to a local password of at least 10 characte
 npm --workspace server run seed
 ```
 
-Seeding is blocked unless `NODE_ENV=development`. It creates synthetic merchants near Pavia Public Market, Jaro Plaza, and La Paz Public Market, a verified demo shelter, and sample batches with local SVG photos. Landmark pins are approximate demo centers, not actual merchant addresses. Re-running refreshes sample quantities and pickup cutoffs.
+Seeding is blocked unless `NODE_ENV=development`. It creates synthetic pre-verified stores near Pavia Public Market, Jaro Plaza, and La Paz Public Market, a verified demo shelter, a demo admin, a pending applicant, and sample batches with local SVG photos. Landmark pins are approximate demo centers, not actual merchant addresses. Re-running refreshes sample quantities and pickup cutoffs.
+
+The client is an installable PWA. It caches the app shell, public food photos, and visited OpenStreetMap tiles. A current QR pass is stored on-device until its 45-minute pickup deadline so it can reopen offline; API responses and buyer personal details are not service-worker cached. Marketplace discovery uses the visitor’s geolocation when allowed and lists recent batches across areas otherwise. `/how-it-works` and `/about` are public pages. Flash Drop pricing is recalculated by the API at claim time; Magic Bayong safety tags are shown before the mandatory buyer acknowledgment. Merchant, NGO, and buyer rescue badges are available from My Impact; eligible merchants can download a PDF certificate.
+
+The seeded admin email is `demo.admin@salbarkain.test`; all seeded accounts use the local `SEED_PASSWORD`. The pending seed applicant has no permit attached, so it can be reviewed or rejected but cannot be approved; submit a normal registration with a test permit to demo the full approval flow.
 
 For Render, set `TRUST_PROXY=1` and set `CLIENT_ORIGINS` to the deployed Vercel origin. Add JWT, database, and media credentials as Render environment variables. These integrations use free tiers; provider accounts and credentials must be configured by the project owner.
 

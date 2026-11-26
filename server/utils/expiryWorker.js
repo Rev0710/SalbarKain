@@ -21,7 +21,7 @@ function startExpiryWorker() {
       }
 
       const expiredBatches = await Batch.updateMany(
-        { status: { $in: ['active', 'sold_out'] }, expiresAt: { $lte: now } },
+        { status: { $in: ['active', 'sold_out'] }, $or: [{ expiresAt: { $lte: now } }, { safeUntil: { $lte: now } }] },
         { $set: { status: 'expired' } },
       );
       if (expiredBatches.modifiedCount > 0) invalidateBatchCache();

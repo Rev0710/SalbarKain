@@ -30,6 +30,17 @@ If you use a custom API domain instead of `*.onrender.com`, add that HTTPS host 
 - Visit `https://<service>.onrender.com/api/health`; check that the database is connected and Cloudinary is configured.
 - Register a merchant, post a small test batch, claim it as a guest from a phone, and redeem its QR from that merchant account. Delete the test batch afterward.
 - Create an NGO account and have an operator verify it in Atlas before testing the donation-only claim path. Public NGO self-registration intentionally does not self-verify.
+- To exercise KYB, submit a registration with a permit document, sign in with the seeded admin account (`demo.admin@salbarkain.test` plus `SEED_PASSWORD`), and review it in Admin workspace. Permit files are uploaded as Cloudinary private assets and only admins receive a short-lived document link.
+- Existing accounts migrated into KYB can upload their permit from the pending workspace; their existing login remains valid while their review is pending.
+- A free NGO donation appears in the public marketplace but its claim action opens partner sign-in; only a verified NGO session can reserve it.
+- Install the PWA from the browser’s install option before testing poor-connectivity pickup. The service worker caches the built app shell and eligible public photo/map assets. A newly issued pickup pass remains in device storage for offline QR display until its deadline; claim and merchant scan requests still require a network connection.
+- Merchant batch posting now requires a same-day safety attestation and a `safeUntil` cutoff no earlier than the pickup cutoff. Batch creation enforces a 15-minute minimum pickup window; claims and scans reject food after either cutoff. Food-safety reports hide a listing after two unique devices; general reports use three.
+- Registration now requires a barangay and municipality/city and offers an OpenStreetMap pin picker, plus the browser’s current-location button. Marketplace proximity sorting requests browser geolocation when available; if denied, it shows recent listings across areas. `/how-it-works` and `/about` are public deep links handled by the Vercel SPA rewrite.
+- The live impact ticker can query municipality and barangay totals. Admin CSV exports accept optional exact municipality and barangay filters; the admin heatmap can apply the same area filters.
+- Merchants can enable the last-30-minute 50% Flash Drop and Surprise Magic Bayong fields. Flash prices are recalculated by the API at claim time, including free flash portions for verified NGOs. `leaflet.heat` and `jspdf` are bundled from npm; no new paid API or environment key is needed.
+- My Impact shows buyer tiers, merchant/NGO milestones, and declared savings. Eligible merchants can download the zero-waste certificate; the admin dashboard can open the rescue and surplus heatmap. Guest personal totals require the same normalized phone and device token used during claiming.
+- Completed scans write one impact-ledger row in the same database transaction as claim completion. The ticker estimates 0.5 kg food rescued and 1.25 kg CO₂e diverted per meal pack; an admin can download the MENRO CSV from Admin workspace.
+- To create the demo admin and sample stores in the hosted Atlas database, run the seed command locally with `NODE_ENV=development`, `MONGODB_URI` pointing at the intended database, and a private `SEED_PASSWORD`; the deployed Render service should remain `NODE_ENV=production`.
 - The free Render service sleeps when idle, so warm the API before a live judging demo and keep a fallback video or screenshots available.
 
 ## Security audit data
@@ -46,4 +57,4 @@ The security suite is intentionally guarded so it cannot run against production 
 npm --workspace server run test:security
 ```
 
-It races five guest requests against one portion and checks inventory is decremented once, rejects a wrong-merchant QR scan and expired pickup/JWT tokens, confirms claim and auth rate limits, checks injection audit records without stored passwords, and verifies oversized uploads return a structured 413. It deletes only the uniquely created fixtures; auth audit rows are retained for inspection and expire by TTL.
+It races five guest requests against one portion and checks inventory is decremented once, rejects unverified merchant posting and non-NGO donation claims, hides a listing after three unique reports, rejects a wrong-merchant QR scan and expired pickup/JWT tokens, confirms claim and auth rate limits, checks injection audit records without stored passwords, and verifies oversized uploads return a structured 413. It deletes only the uniquely created fixtures; auth audit rows are retained for inspection and expire by TTL.
