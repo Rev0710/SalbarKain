@@ -3,6 +3,7 @@ import { CircleMarker, MapContainer, Popup, useMap } from 'react-leaflet';
 import 'leaflet/dist/leaflet.css';
 import { ILOILO_CENTER, ILOILO_MAP_OPTIONS, isWithinIloilo } from '../utils/iloiloMap.js';
 import ReliableTileLayer from './ReliableTileLayer.jsx';
+import OfflineIloiloLayer from './OfflineIloiloLayer.jsx';
 
 function FitBatches({ batches }) {
   const map = useMap();
@@ -35,6 +36,7 @@ export default function BatchMap({ batches, onSelect = () => {} }) {
   const reportTileStatus = useCallback(status => { setTilesReady(status === 'ready'); setTileError(status === 'error'); }, []);
   function retryTiles() { setTileError(false); setTilesReady(false); setMapKey(value => value + 1); }
   return <section className="map-panel" aria-label="Surplus food map"><MapContainer key={mapKey} center={ILOILO_CENTER} zoom={13} {...ILOILO_MAP_OPTIONS} scrollWheelZoom={false} preferCanvas>
+    <OfflineIloiloLayer />
     <ReliableTileLayer retryKey={mapKey} onStatus={reportTileStatus} />
     <RefreshMapSize />
     <FitBatches batches={batches} />
@@ -45,5 +47,5 @@ export default function BatchMap({ batches, onSelect = () => {} }) {
       const point = [coordinates[1], coordinates[0]];
       return <CircleMarker key={batch._id} center={point} radius={9} pathOptions={{ className: `map-marker ${batch.isDonationOnly ? 'free' : ''}`, color: '#FFFFFF', weight: 2, fillColor: batch.isDonationOnly ? '#D97706' : '#15803D', fillOpacity: 1 }} eventHandlers={{ click: () => onSelect(batch) }}><Popup><p className="map-popup-title">{batch.itemName}</p><p className="map-popup-price">{batch.merchantId?.storeName} · {batch.merchantId?.barangay || 'Barangay unspecified'}, {batch.merchantId?.municipality || ''}</p><p className="map-popup-price">{batch.isDonationOnly ? 'Free for verified NGOs' : `₱${Number(batch.price).toFixed(2)}`}</p></Popup></CircleMarker>;
     })}
-  </MapContainer>{!tilesReady && !tileError && <div className="map-tile-status" role="status">Loading Iloilo map…</div>}{tileError && <div className="map-tile-alert" role="alert"><span>Map providers are temporarily unavailable. Your food list is still available.</span><button type="button" className="secondary-button compact" onClick={retryTiles}>Retry map</button></div>}</section>;
+  </MapContainer>{!tilesReady && !tileError && <div className="map-tile-status" role="status">Showing Iloilo guide while live streets load…</div>}{tileError && <div className="map-tile-alert" role="alert"><span>Showing the offline Iloilo map. Live streets are temporarily unavailable.</span><button type="button" className="secondary-button compact" onClick={retryTiles}>Retry live map</button></div>}</section>;
 }
