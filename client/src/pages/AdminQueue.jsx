@@ -1,11 +1,12 @@
 import { Component, useCallback, useEffect, useMemo, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { CircleMarker, MapContainer, Popup, TileLayer, useMap } from 'react-leaflet';
+import { CircleMarker, MapContainer, Popup, useMap } from 'react-leaflet';
 import L from 'leaflet';
 import 'leaflet.heat';
 import 'leaflet/dist/leaflet.css';
 import { api } from '../utils/api.js';
 import { ILOILO_CENTER, ILOILO_MAP_OPTIONS, isWithinIloilo } from '../utils/iloiloMap.js';
+import ReliableTileLayer from '../components/ReliableTileLayer.jsx';
 
 const TABS = [
   ['overview', 'Municipal overview'], ['verifications', 'KYB & account status'], ['flagged', 'Trust & safety'],
@@ -215,7 +216,7 @@ export default function AdminQueue({ session = {}, onNotice = () => {} }) {
         <section className="admin-kpi-grid">{[
           ['Total meals rescued', `${formatNumber(kpis.mealsSaved)} packs`], ['Food waste diverted', `${formatNumber(kpis.foodDivertedKg, 1)} kg`], ['CO₂e prevented', `${formatNumber(kpis.co2PreventedKg, 1)} kg`], ['Pending KYB approvals', formatNumber(kpis.pendingReviewsCount)],
         ].map(([label, value]) => <article className="panel admin-kpi" key={label}><span>{label}</span><strong>{value}</strong></article>)}</section>
-        <section className="panel admin-map-panel"><div><h2>Iloilo food rescue heatmap</h2><p className="panel-subtitle">Verified food partners and local activity inside Iloilo Province.</p></div>{features.length ? <AdminMapBoundary key={features.length}><MapContainer center={ILOILO_CENTER} zoom={13} {...ILOILO_MAP_OPTIONS} scrollWheelZoom={false} className="admin-command-map"><TileLayer attribution='&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors' url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png" /><HeatLayer features={features} /><MapPins features={features} /></MapContainer></AdminMapBoundary> : <div className="empty-state admin-map-empty"><h3>No heatmap coordinates yet</h3><p>Map points will appear when verified partners have Iloilo locations.</p></div>}</section>
+        <section className="panel admin-map-panel"><div><h2>Iloilo food rescue heatmap</h2><p className="panel-subtitle">Verified food partners and local activity inside Iloilo Province.</p></div><AdminMapBoundary><MapContainer center={ILOILO_CENTER} zoom={13} {...ILOILO_MAP_OPTIONS} scrollWheelZoom={false} className="admin-command-map"><ReliableTileLayer /><HeatLayer features={features} /><MapPins features={features} /></MapContainer></AdminMapBoundary>{!features.length && <p className="panel-subtitle">No heatmap coordinates yet. The Iloilo map is ready and partner points will appear as data is recorded.</p>}</section>
         {overview.jurisdiction?.assignedMunicipality === 'ALL' && <OfficerForm onCreated={async () => { await load(); onNotice('Municipal admin account created.'); }} />}
       </>}
 

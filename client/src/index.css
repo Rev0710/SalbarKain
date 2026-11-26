@@ -257,6 +257,8 @@ input[type="checkbox"] { accent-color:#15803D; }
 .admin-kpi strong { color:#0F172A; font-size:clamp(22px,3vw,30px); }
 .admin-map-panel { display:grid; gap:12px; }
 .admin-command-map { width:100%; height:420px; border-radius:8px; border:1px solid #E2E8F0; }
+.workspace-map-panel { display:grid; gap:12px; margin-top:20px; }
+.workspace-map-panel .map-panel { position:relative; top:auto; width:100%; height:min(68vh,680px); min-height:420px; max-height:680px; }
 .admin-count { display:inline-grid; min-width:24px; min-height:24px; place-items:center; margin-left:5px; border-radius:999px; color:#D97706; background:#F8FAFC; font-size:12px; }
 .admin-rejection-label textarea { min-height:80px; resize:vertical; }
 .admin-flag-actions { display:flex; flex-direction:column; gap:7px; }

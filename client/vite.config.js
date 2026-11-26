@@ -30,9 +30,9 @@ export default defineConfig({
             options: { cacheName: 'salbarkain-food-photos', expiration: { maxEntries: 80, maxAgeSeconds: 7 * 24 * 60 * 60 } },
           },
           {
-            urlPattern: /^https:\/\/(?:[a-z0-9-]+\.)?tile\.openstreetmap\.org\//,
+            urlPattern: /^https:\/\/(?:[a-z0-9-]+\.)?tile\.openstreetmap\.(?:org|fr)\//,
             handler: 'CacheFirst',
-            options: { cacheName: 'salbarkain-map-tiles', expiration: { maxEntries: 120, maxAgeSeconds: 24 * 60 * 60 } },
+            options: { cacheName: 'salbarkain-map-tiles-v2', expiration: { maxEntries: 500, maxAgeSeconds: 7 * 24 * 60 * 60 } },
           },
         ],
       },

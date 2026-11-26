@@ -1,7 +1,8 @@
 import { useEffect } from 'react';
-import { CircleMarker, MapContainer, TileLayer, useMap, useMapEvents } from 'react-leaflet';
+import { CircleMarker, MapContainer, useMap, useMapEvents } from 'react-leaflet';
 import 'leaflet/dist/leaflet.css';
 import { ILOILO_CENTER, ILOILO_MAP_OPTIONS, isWithinIloilo } from '../utils/iloiloMap.js';
+import ReliableTileLayer from './ReliableTileLayer.jsx';
 
 function PinEvents({ onChange, onLocate }) {
   const map = useMap();
@@ -19,5 +20,5 @@ export default function LocationPicker({ lat, lng, onChange, located }) {
   const latitude = Number(lat); const longitude = Number(lng);
   const valid = lat !== '' && lng !== '' && isWithinIloilo(latitude, longitude);
   const center = valid ? [latitude, longitude] : ILOILO_CENTER;
-  return <div className="location-picker"><MapContainer center={center} zoom={valid ? 14 : 13} {...ILOILO_MAP_OPTIONS} scrollWheelZoom className="location-picker-map"><TileLayer attribution='&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors' url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png" /><PinEvents onChange={onChange} onLocate={located} />{valid && <CircleMarker center={center} radius={8} pathOptions={{ color: '#FFFFFF', weight: 2, fillColor: '#15803D', fillOpacity: 1 }} />}</MapContainer><p className="form-note">Tap the map to place your store or organization pin within Iloilo Province.</p></div>;
+  return <div className="location-picker"><MapContainer center={center} zoom={valid ? 14 : 13} {...ILOILO_MAP_OPTIONS} scrollWheelZoom className="location-picker-map"><ReliableTileLayer /><PinEvents onChange={onChange} onLocate={located} />{valid && <CircleMarker center={center} radius={8} pathOptions={{ color: '#FFFFFF', weight: 2, fillColor: '#15803D', fillOpacity: 1 }} />}</MapContainer><p className="form-note">Tap the map to place your store or organization pin within Iloilo Province.</p></div>;
 }
