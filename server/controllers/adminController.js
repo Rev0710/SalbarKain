@@ -55,6 +55,7 @@ function adminSafeUser(user) {
     barangay: user.barangay || 'Unspecified', municipality: user.municipality || 'Unspecified',
     storefrontPhotoUrl: user.storefrontPhotoUrl, verificationStatus: user.verificationStatus,
     rejectionReason: user.rejectionReason, createdAt: user.createdAt,
+    zeroWasteCertified: user.zeroWasteCertified === true,
     hasVerificationDocument: Boolean(user.verificationDocPublicId),
   };
 }
@@ -111,12 +112,16 @@ async function overview(req, res) {
 }
 
 async function listVerifications(req, res) {
-  const users = await User.find({ role: { $in: ['merchant', 'ngo'] }, ...adminScope(req), $or: [
-    { verificationStatus: { $in: ['pending', 'rejected'] } },
-    { verificationStatus: { $exists: false }, verified: { $ne: true } },
-  ] })
+  const status = typeof req.query.status === 'string' ? req.query.status : 'all';
+  const statuses = ['pending', 'verified', 'rejected', 'suspended'];
+  if (status !== 'all' && !statuses.includes(status)) throw httpError(400, 'INVALID_STATUS_FILTER', 'Choose a valid account status.');
+  const statusFilter = status === 'all' ? {} : status === 'pending'
+    ? { $or: [{ verificationStatus: 'pending' }, { verificationStatus: { $exists: false }, verified: { $ne: true } }] }
+    : status === 'verified' ? { $or: [{ verificationStatus: 'verified' }, { verified: true }] }
+      : { verificationStatus: status };
+  const users = await User.find({ role: { $in: ['merchant', 'ngo'] }, ...adminScope(req), ...statusFilter })
     .select('+verificationDocPublicId +verificationDocFormat +rejectionReason')
-    .sort({ createdAt: 1 }).limit(100).lean();
+    .sort({ createdAt: -1 }).limit(250).lean();
   res.json({ success: true, data: { applicants: users.map(adminSafeUser) } });
 }
 
@@ -136,15 +141,16 @@ async function getVerificationDocument(req, res) {
 async function reviewVerification(req, res) {
   const { decision } = req.body || {};
   const reason = typeof (req.body?.rejectionReason ?? req.body?.note) === 'string' ? (req.body.rejectionReason ?? req.body.note).trim().slice(0, 300) : '';
-  if (!['approve', 'reject'].includes(decision)) throw httpError(400, 'INVALID_DECISION', 'Choose approve or reject.');
-  const rejectionReason = decision === 'reject' ? (reason.length >= 3 ? reason : 'Rejected by administrator.') : '';
+  if (!['approve', 'reject', 'suspend'].includes(decision)) throw httpError(400, 'INVALID_DECISION', 'Choose approve, reject, or suspend.');
+  if (decision === 'reject' && reason.length < 3) throw httpError(400, 'REJECTION_REASON_REQUIRED', 'Enter a reason of at least 3 characters before rejecting.');
+  const rejectionReason = decision === 'reject' ? reason : '';
   const filter = { _id: req.params.userId, role: { $in: ['merchant', 'ngo'] }, ...adminScope(req) };
   if (decision === 'approve') {
     const application = await User.findOne(filter).select('+verificationDocPublicId').lean();
     if (!application) throw httpError(404, 'APPLICANT_NOT_FOUND', 'Partner application was not found in your jurisdiction.');
     if (!application.verificationDocPublicId) throw httpError(409, 'VERIFICATION_DOCUMENT_REQUIRED', 'A verification image or document must be on file before approval.');
   }
-  const status = decision === 'approve' ? 'verified' : 'rejected';
+  const status = decision === 'approve' ? 'verified' : decision === 'reject' ? 'rejected' : 'suspended';
   const now = new Date();
   const update = { $set: {
     verificationStatus: status, verified: status === 'verified', verificationReviewedAt: now,
@@ -155,6 +161,7 @@ async function reviewVerification(req, res) {
   if (decision === 'reject') update.$set.verificationNote = rejectionReason;
   const user = await User.findOneAndUpdate(filter, update, { new: true, runValidators: true }).select('+rejectionReason');
   if (!user) throw httpError(404, 'APPLICANT_NOT_FOUND', 'Partner application was not found in your jurisdiction.');
+  if (decision === 'suspend' && user.role === 'merchant') await Batch.updateMany({ merchantId: user._id, status: 'active' }, { $set: { status: 'withdrawn' } });
   invalidateBatchCache();
   res.json({ success: true, data: { applicant: adminSafeUser(user) } });
 }
@@ -223,9 +230,9 @@ async function leaderboard(req, res) {
   const scope = adminScope(req);
   const [merchantTotals, ngoUsers] = await Promise.all([
     ImpactEntry.aggregate([{ $match: scope }, { $group: { _id: '$merchantId', rescues: { $sum: '$quantity' } } }, { $match: { rescues: { $gte: 50 } } }]),
-    User.find({ role: 'ngo', ...scope }).select('name organizationName phone municipality barangay').lean(),
+    User.find({ role: 'ngo', ...scope, $or: [{ verificationStatus: 'verified' }, { verified: true }] }).select('name organizationName phone municipality barangay zeroWasteCertified').lean(),
   ]);
-  const merchantMap = merchantTotals.length ? await User.find({ _id: { $in: merchantTotals.map((row) => row._id) } }).select('storeName municipality barangay').lean() : [];
+  const merchantMap = merchantTotals.length ? await User.find({ _id: { $in: merchantTotals.map((row) => row._id) }, role: 'merchant', ...scope, $or: [{ verificationStatus: 'verified' }, { verified: true }] }).select('storeName municipality barangay zeroWasteCertified').lean() : [];
   const merchantById = new Map(merchantMap.map((merchant) => [String(merchant._id), merchant]));
   const merchants = merchantTotals.map((row) => ({ ...merchantById.get(String(row._id)), id: String(row._id), rescues: row.rescues })).filter((row) => row.storeName);
   const phoneToNgos = new Map();
@@ -244,9 +251,32 @@ async function leaderboard(req, res) {
     for (const claim of claims) {
       try { const normalized = normalizePhone(claim.phone); if (phoneToNgos.has(normalized)) totals.set(normalized, (totals.get(normalized) || 0) + claim.qty); } catch { /* skip malformed historical contact values */ }
     }
-    ngoTotals = [...totals].filter(([, meals]) => meals >= 100).flatMap(([phone, meals]) => (phoneToNgos.get(phone) || []).map((ngo) => ({ id: String(ngo._id), name: ngo.organizationName || ngo.name, municipality: ngo.municipality, barangay: ngo.barangay, rescues: meals })));
+    ngoTotals = [...totals].filter(([, meals]) => meals >= 100).flatMap(([phone, meals]) => (phoneToNgos.get(phone) || []).map((ngo) => ({ id: String(ngo._id), name: ngo.organizationName || ngo.name, municipality: ngo.municipality, barangay: ngo.barangay, rescues: meals, zeroWasteCertified: ngo.zeroWasteCertified === true })));
   }
   res.set('Cache-Control', 'no-store').json({ success: true, data: { merchants, ngos: ngoTotals } });
 }
 
-module.exports = { overview, listVerifications, getVerificationDocument, reviewVerification, listFlaggedBatches, reviewFlaggedBatch, restoreFlaggedBatch, exportMenro, createOfficer, leaderboard };
+async function setPartnerCertification(req, res) {
+  const certified = req.body?.certified;
+  if (typeof certified !== 'boolean') throw httpError(400, 'INVALID_CERTIFICATION', 'Choose whether to issue or revoke the certification.');
+  const user = await User.findOne({ _id: req.params.userId, role: { $in: ['merchant', 'ngo'] }, ...adminScope(req), $or: [{ verificationStatus: 'verified' }, { verified: true }] });
+  if (!user) throw httpError(404, 'PARTNER_NOT_FOUND', 'Verified partner was not found in your jurisdiction.');
+  if (certified) {
+    const rescues = await ImpactEntry.aggregate([{ $match: { ...adminScope(req), ...(user.role === 'merchant' ? { merchantId: user._id } : {}) } }, { $group: { _id: null, quantity: { $sum: '$quantity' } } }]);
+    let eligibleRescues = Number(rescues[0]?.quantity || 0);
+    if (user.role === 'ngo' && user.phone) {
+      const normalized = normalizePhone(user.phone);
+      const merchantIds = await scopedMerchantIds(req);
+      const match = { status: 'completed', phone: { $exists: true }, ...(merchantIds ? { merchantId: { $in: merchantIds } } : {}) };
+      const claims = await Claim.find(match).select('+phone qty').lean();
+      eligibleRescues = claims.reduce((sum, claim) => { try { return normalizePhone(claim.phone) === normalized ? sum + Number(claim.qty || 0) : sum; } catch { return sum; } }, 0);
+    }
+    const threshold = user.role === 'merchant' ? 50 : 100;
+    if (eligibleRescues < threshold) throw httpError(409, 'RECOGNITION_THRESHOLD_NOT_MET', `This partner needs at least ${threshold} completed rescue packs.`);
+  }
+  user.zeroWasteCertified = certified;
+  await user.save();
+  res.json({ success: true, data: { id: user._id.toString(), zeroWasteCertified: user.zeroWasteCertified } });
+}
+
+module.exports = { overview, listVerifications, getVerificationDocument, reviewVerification, listFlaggedBatches, reviewFlaggedBatch, restoreFlaggedBatch, exportMenro, createOfficer, leaderboard, setPartnerCertification };

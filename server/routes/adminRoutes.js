@@ -1,7 +1,7 @@
 const express = require('express');
 const asyncHandler = require('../middleware/asyncHandler');
 const { authenticate, authorizeRoles } = require('../middleware/auth');
-const { overview, listVerifications, getVerificationDocument, reviewVerification, listFlaggedBatches, reviewFlaggedBatch, restoreFlaggedBatch, exportMenro, createOfficer, leaderboard } = require('../controllers/adminController');
+const { overview, listVerifications, getVerificationDocument, reviewVerification, listFlaggedBatches, reviewFlaggedBatch, restoreFlaggedBatch, exportMenro, createOfficer, leaderboard, setPartnerCertification } = require('../controllers/adminController');
 
 const router = express.Router();
 router.use(authenticate, authorizeRoles('admin'));
@@ -16,4 +16,5 @@ router.patch('/flagged-batches/:batchId/restore', asyncHandler(restoreFlaggedBat
 router.get('/export-menro', asyncHandler(exportMenro));
 router.post('/create-officer', asyncHandler(createOfficer));
 router.get('/leaderboard', asyncHandler(leaderboard));
+router.patch('/leaderboard/:userId/certification', asyncHandler(setPartnerCertification));
 module.exports = router;

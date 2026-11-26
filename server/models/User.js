@@ -25,6 +25,7 @@ const userSchema = new Schema({
   // `verified` remains for existing account compatibility; new KYB uses verificationStatus.
   verified: { type: Boolean, default: false },
   verificationStatus: { type: String, enum: ['pending', 'verified', 'rejected', 'suspended'], default: 'pending', index: true },
+  zeroWasteCertified: { type: Boolean, default: false, index: true },
   assignedMunicipality: { type: String, trim: true, maxlength: 100, default() { return this.role === 'admin' ? 'ALL' : undefined; }, index: true },
   verifiedBy: { type: Schema.Types.ObjectId, ref: 'User', default: null },
   verifiedAt: { type: Date, default: null },
