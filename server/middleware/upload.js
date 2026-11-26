@@ -1,5 +1,9 @@
 const multer = require('multer');
 const httpError = require('../utils/httpError');
+const photoMimeTypes = new Set([
+  'image/jpeg', 'image/png', 'image/webp', 'image/gif', 'image/avif',
+  'image/bmp', 'image/tiff', 'image/heic', 'image/heif',
+]);
 
 const storage = multer.memoryStorage();
 const imageUpload = multer({
@@ -17,10 +21,11 @@ const kybUpload = multer({
   storage,
   limits: { fileSize: 8 * 1024 * 1024, files: 2 },
   fileFilter(_req, file, callback) {
+    const isPhoto = photoMimeTypes.has(file.mimetype);
     const allowed = file.fieldname === 'verificationDoc'
-      ? ['application/pdf', 'image/jpeg', 'image/png', 'image/webp']
-      : file.fieldname === 'storefrontPhoto' && ['image/jpeg', 'image/png', 'image/webp'].includes(file.mimetype);
-    if (!allowed) return callback(httpError(415, 'UNSUPPORTED_KYB_FILE', 'Upload a PDF, JPG, PNG, or WebP verification document and an optional JPG, PNG, or WebP storefront photo.'));
+      ? file.mimetype === 'application/pdf' || isPhoto
+      : file.fieldname === 'storefrontPhoto' && isPhoto;
+    if (!allowed) return callback(httpError(415, 'UNSUPPORTED_KYB_FILE', 'Upload a PDF or photo (JPG, PNG, WebP, GIF, AVIF, BMP, TIFF, or HEIC).'));
     callback(null, true);
   },
 }).fields([{ name: 'verificationDoc', maxCount: 1 }, { name: 'storefrontPhoto', maxCount: 1 }]);

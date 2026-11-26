@@ -12,15 +12,18 @@ import ImpactExport from '../components/ImpactExport.jsx';
 function VerificationUploadPanel() {
   const [document, setDocument] = useState(null); const [storefront, setStorefront] = useState(null); const [busy, setBusy] = useState(false); const [error, setError] = useState(''); const [done, setDone] = useState(false);
   async function submit(event) {
-    event.preventDefault(); setError(''); setDone(false);
+    event.preventDefault();
+    const formElement = event.currentTarget;
+    setError(''); setDone(false);
     if (!document) { setError('Choose a permit or organization verification document.'); return; }
     const form = new FormData(); form.append('verificationDoc', document); if (storefront) form.append('storefrontPhoto', storefront);
     setBusy(true);
-    try { await api.patch('/auth/verification', form, { headers: { 'Content-Type': 'multipart/form-data' } }); setDone(true); setDocument(null); setStorefront(null); event.currentTarget.reset(); }
-    catch (err) { setError(err.response?.data?.message || 'Your verification documents could not be submitted.'); }
-    finally { setBusy(false); }
+    try { await api.patch('/auth/verification', form, { headers: { 'Content-Type': 'multipart/form-data' } }); }
+    catch (err) { setError(err.response?.data?.message || 'Your verification documents could not be submitted.'); setBusy(false); return; }
+    setDocument(null); setStorefront(null); setDone(true); setBusy(false);
+    formElement.reset();
   }
-  return <section className="panel verification-upload"><h2>Submit verification documents</h2><p className="panel-subtitle">Upload a permit or organization document so an admin can review your application.</p><form className="form-stack" onSubmit={submit}><label className="field-label">Permit / verification document<input className="field-input" type="file" accept="application/pdf,image/jpeg,image/png,image/webp" required onChange={e => setDocument(e.target.files?.[0] || null)} /></label><label className="field-label">Storefront photo <span className="form-note">Optional</span><input className="field-input" type="file" accept="image/jpeg,image/png,image/webp" onChange={e => setStorefront(e.target.files?.[0] || null)} /></label>{error && <p className="form-error" role="alert">{error}</p>}{done && <p className="verified-badge" role="status">Documents submitted for review.</p>}<button className="primary-button" disabled={busy}>{busy ? 'Submitting…' : 'Submit for review'}</button></form></section>;
+  return <section className="panel verification-upload"><h2>Submit verification documents</h2><p className="panel-subtitle">For checking, a clear photo is okay. Upload a permit/organization document or any photo; an admin can review it.</p><form className="form-stack" onSubmit={submit}><label className="field-label">Permit / verification document<input className="field-input" type="file" accept="application/pdf,image/*" required onChange={e => setDocument(e.target.files?.[0] || null)} /></label><label className="field-label">Storefront photo <span className="form-note">Optional</span><input className="field-input" type="file" accept="image/*" onChange={e => setStorefront(e.target.files?.[0] || null)} /></label>{error && !done && <p className="form-error" role="alert">{error}</p>}{done && <p className="verified-badge" role="status">Documents submitted for review.</p>}<button className="primary-button" disabled={busy}>{busy ? 'Submitting…' : 'Submit for review'}</button></form></section>;
 }
 
 function MerchantWorkspace({ session, onBrowse, onNotice }) {

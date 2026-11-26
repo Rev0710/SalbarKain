@@ -100,7 +100,7 @@ async function register(req, res) {
       throw httpError(503, 'UPLOAD_NOT_CONFIGURED', 'Verification uploads are not configured on this server.');
     }
     privateDoc = await uploadToCloudinary(verificationDoc.buffer, { folder: 'salbar-kain/private-verification', resource_type: 'raw', type: 'private', format: verificationDoc.mimetype === 'application/pdf' ? 'pdf' : verificationDoc.mimetype.split('/')[1] });
-    if (req.files?.storefrontPhoto?.[0]) storefront = await uploadToCloudinary(req.files.storefrontPhoto[0].buffer, { folder: 'salbar-kain/storefronts', resource_type: 'image', allowed_formats: ['jpg', 'jpeg', 'png', 'webp'] });
+    if (req.files?.storefrontPhoto?.[0]) storefront = await uploadToCloudinary(req.files.storefrontPhoto[0].buffer, { folder: 'salbar-kain/storefronts', resource_type: 'image' });
     user = await User.create({ ...userFields, passwordHash, verificationStatus: 'pending', verified: false, verificationDocPublicId: privateDoc.public_id, verificationDocFormat: privateDoc.format || 'pdf', storefrontPhotoUrl: storefront?.secure_url });
   } catch (error) {
     if (privateDoc?.public_id) await cloudinary.uploader.destroy(privateDoc.public_id, { resource_type: 'raw', type: 'private' }).catch(() => {});
@@ -127,7 +127,7 @@ async function submitVerificationUpdate(req, res) {
   let privateDoc; let storefront;
   try {
     privateDoc = await uploadToCloudinary(verificationDoc.buffer, { folder: 'salbar-kain/private-verification', resource_type: 'raw', type: 'private', format: verificationDoc.mimetype === 'application/pdf' ? 'pdf' : verificationDoc.mimetype.split('/')[1] });
-    if (req.files?.storefrontPhoto?.[0]) storefront = await uploadToCloudinary(req.files.storefrontPhoto[0].buffer, { folder: 'salbar-kain/storefronts', resource_type: 'image', allowed_formats: ['jpg', 'jpeg', 'png', 'webp'] });
+    if (req.files?.storefrontPhoto?.[0]) storefront = await uploadToCloudinary(req.files.storefrontPhoto[0].buffer, { folder: 'salbar-kain/storefronts', resource_type: 'image' });
     const user = await User.findById(req.user.id).select('+verificationDocPublicId');
     if (!user) throw httpError(404, 'ACCOUNT_NOT_FOUND', 'Partner account was not found.');
     if (user.verificationStatus === 'verified' || user.verified) throw httpError(409, 'ALREADY_VERIFIED', 'Your partner account is already verified.');
