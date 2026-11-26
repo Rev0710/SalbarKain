@@ -108,7 +108,7 @@ function AppShell() {
     {loginOpen && <AuthModal onClose={() => setLoginOpen(false)} onLogin={handleLogin} />}
     {impactOpen && <MyImpactModal session={session} onClose={() => setImpactOpen(false)} />}
     {claimBatch && <ClaimDrawer batch={claimBatch} onClose={() => setClaimBatch(null)} onSubmit={submitClaim} />}
-    {pickupPass && <QrPassModal pass={pickupPass} onClose={() => setPickupPass(null)} />}
+    {pickupPass && <QrPassModal pass={pickupPass} onClose={(result) => { setPickupPass(null); if (result?.cancelled) { localStorage.removeItem(PICKUP_PASS_KEY); setSavedPass(null); setMarketRefresh(value => value + 1); setNotice('Pickup cancelled. The portions are back in the marketplace.'); } }} />}
     {notice && <div className="toast" role="status">{notice}<button onClick={() => setNotice('')} aria-label="Dismiss">×</button></div>}
   </div>;
 }

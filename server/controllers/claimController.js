@@ -143,6 +143,57 @@ async function createClaim(req, res) {
   });
 }
 
+async function cancelClaim(req, res) {
+  const { qrToken } = req.params;
+  const deviceToken = req.body?.deviceToken;
+  if (!/^[a-f0-9]{64}$/i.test(qrToken || '')) throw httpError(404, 'CLAIM_NOT_FOUND', 'Pickup pass was not found.');
+  if (typeof deviceToken !== 'string' || !/^[a-zA-Z0-9-]{16,100}$/.test(deviceToken)) {
+    throw httpError(400, 'INVALID_DEVICE_TOKEN', 'This device could not verify the pickup pass.');
+  }
+
+  const session = await mongoose.startSession();
+  const now = new Date();
+  let result;
+  try {
+    await session.withTransaction(async () => {
+      const claim = await Claim.findOneAndUpdate(
+        { qrToken, deviceToken, status: 'pending', pickupDeadline: { $gt: now } },
+        { $set: { status: 'cancelled' } },
+        { session, returnDocument: 'after' },
+      ).select('+qrToken').lean();
+
+      if (!claim) {
+        const existing = await Claim.findOne({ qrToken, deviceToken }).session(session).select('status pickupDeadline').lean();
+        if (!existing) throw httpError(404, 'CLAIM_NOT_FOUND', 'Pickup pass was not found on this device.');
+        if (existing.status === 'cancelled') { result = { status: 'cancelled', alreadyCancelled: true }; return; }
+        if (existing.status === 'pending' && new Date(existing.pickupDeadline) <= now) throw httpError(410, 'PICKUP_PASS_EXPIRED', 'This pickup pass has already expired.');
+        throw httpError(409, 'CLAIM_NOT_PENDING', 'Only a pending pickup reservation can be cancelled.');
+      }
+
+      await Batch.updateOne(
+        { _id: claim.batchId },
+        [
+          { $set: { remainingQty: { $min: [{ $add: [{ $ifNull: ['$remainingQty', 0] }, claim.qty] }, '$quantity'] } } },
+          { $set: { status: {
+            $cond: [
+              { $or: [{ $lte: ['$expiresAt', now] }, { $lte: [{ $ifNull: ['$safeUntil', '$expiresAt'] }, now] }] },
+              'expired',
+              { $cond: [{ $in: ['$status', ['withdrawn', 'flagged']] }, '$status', 'active'] },
+            ],
+          } } },
+        ],
+        { session },
+      );
+      result = { status: 'cancelled', alreadyCancelled: false };
+    });
+  } finally {
+    await session.endSession();
+  }
+
+  if (!result?.alreadyCancelled) invalidateBatchCache();
+  res.json({ success: true, data: result });
+}
+
 async function verifyClaim(req, res) {
   const { qrToken } = req.params;
   if (!/^[a-f0-9]{64}$/i.test(qrToken)) {
@@ -215,4 +266,4 @@ async function verifyClaim(req, res) {
   });
 }
 
-module.exports = { createClaim, verifyClaim };
+module.exports = { createClaim, cancelClaim, verifyClaim };
