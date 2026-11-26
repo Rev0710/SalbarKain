@@ -17,7 +17,7 @@ Render’s free web services sleep after 15 minutes without inbound traffic and 
 
 ## 2. Deploy the frontend to Vercel
 
-1. Import the same GitHub repository as a Vercel project. Leave the project root at the repository root so npm can see the workspace lockfile.
+1. Import the same GitHub repository as a Vercel project. The recommended project root is the repository root so npm can see the workspace lockfile. If the Vercel project uses `client` as its root instead, `client/vercel.json` provides the SPA rewrite and security headers for that setup too.
 2. Set the build command to `npm run build` and output directory to `client/dist`. Use the Node version in `.nvmrc` (22).
 3. Add the build-time environment variable `VITE_API_URL=https://<service>.onrender.com/api`. Replace the example with the exact Render service URL. Vite variables are included in public browser code: put only the public API URL here, never Atlas or Cloudinary credentials.
 4. Deploy. The root `vercel.json` supplies the SPA rewrite and security headers. Vercel documents the rewrite needed for SPA deep links and project build settings in its [Vite deployment guide](https://vercel.com/docs/frameworks/frontend/vite).

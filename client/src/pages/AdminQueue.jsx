@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { Component, useCallback, useEffect, useMemo, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { CircleMarker, MapContainer, Popup, TileLayer, useMap } from 'react-leaflet';
 import L from 'leaflet';
@@ -53,6 +53,16 @@ function MapPins({ features }) {
 function formatNumber(value, digits = 0) {
   const numeric = Number(value);
   return new Intl.NumberFormat('en-PH', { maximumFractionDigits: digits }).format(Number.isFinite(numeric) ? numeric : 0);
+}
+
+class AdminMapBoundary extends Component {
+  state = { failed: false };
+  static getDerivedStateFromError() { return { failed: true }; }
+  componentDidCatch(error) { console.error('Admin heatmap failed:', error?.message || 'Unknown map error'); }
+  render() {
+    if (this.state.failed) return <div className="empty-state admin-map-empty" role="status"><h3>Map temporarily unavailable</h3><p>The rest of the admin workspace is still available. Refresh to try the map again.</p></div>;
+    return this.props.children;
+  }
 }
 
 function AdminSkeleton() {
@@ -205,7 +215,7 @@ export default function AdminQueue({ session = {}, onNotice = () => {} }) {
         <section className="admin-kpi-grid">{[
           ['Total meals rescued', `${formatNumber(kpis.mealsSaved)} packs`], ['Food waste diverted', `${formatNumber(kpis.foodDivertedKg, 1)} kg`], ['CO₂e prevented', `${formatNumber(kpis.co2PreventedKg, 1)} kg`], ['Pending KYB approvals', formatNumber(kpis.pendingReviewsCount)],
         ].map(([label, value]) => <article className="panel admin-kpi" key={label}><span>{label}</span><strong>{value}</strong></article>)}</section>
-        <section className="panel admin-map-panel"><div><h2>Iloilo food rescue heatmap</h2><p className="panel-subtitle">Verified food partners and local activity inside Iloilo Province.</p></div>{features.length ? <MapContainer center={ILOILO_CENTER} zoom={13} {...ILOILO_MAP_OPTIONS} scrollWheelZoom={false} className="admin-command-map"><TileLayer attribution='&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors' url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png" /><HeatLayer features={features} /><MapPins features={features} /></MapContainer> : <div className="empty-state admin-map-empty"><h3>No heatmap coordinates yet</h3><p>Map points will appear when verified partners have Iloilo locations.</p></div>}</section>
+        <section className="panel admin-map-panel"><div><h2>Iloilo food rescue heatmap</h2><p className="panel-subtitle">Verified food partners and local activity inside Iloilo Province.</p></div>{features.length ? <AdminMapBoundary key={features.length}><MapContainer center={ILOILO_CENTER} zoom={13} {...ILOILO_MAP_OPTIONS} scrollWheelZoom={false} className="admin-command-map"><TileLayer attribution='&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors' url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png" /><HeatLayer features={features} /><MapPins features={features} /></MapContainer></AdminMapBoundary> : <div className="empty-state admin-map-empty"><h3>No heatmap coordinates yet</h3><p>Map points will appear when verified partners have Iloilo locations.</p></div>}</section>
         {overview.jurisdiction?.assignedMunicipality === 'ALL' && <OfficerForm onCreated={async () => { await load(); onNotice('Municipal admin account created.'); }} />}
       </>}
 
