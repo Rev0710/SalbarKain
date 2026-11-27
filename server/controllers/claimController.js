@@ -318,4 +318,50 @@ async function merchantImpact(req, res) {
   });
 }
 
-module.exports = { createClaim, cancelClaim, verifyClaim, listMerchantActiveClaims, merchantImpact };
+async function getClaimStatus(req, res) {
+  const { qrToken } = req.params;
+  if (!/^[a-f0-9]{64}$/i.test(qrToken || '')) throw httpError(404, 'CLAIM_NOT_FOUND', 'Pickup pass was not found.');
+  const claim = await Claim.findOne({ qrToken })
+    .select('+qrToken status qty pickupDeadline batchId merchantId')
+    .populate({ path: 'batchId', select: 'itemName' })
+    .populate({ path: 'merchantId', select: 'storeName' });
+  if (!claim) throw httpError(404, 'CLAIM_NOT_FOUND', 'Pickup pass was not found.');
+
+  if (claim.status === 'pending' && claim.pickupDeadline <= new Date()) {
+    await expireClaimAndRestore(claim._id, new Date());
+    claim.status = 'expired';
+  }
+
+  res.set('Cache-Control', 'no-store').json({
+    success: true,
+    data: {
+      status: claim.status,
+      quantity: claim.qty,
+      itemName: claim.batchId?.itemName || 'Surplus batch',
+      storeName: claim.merchantId?.storeName || 'Food partner',
+    },
+  });
+}
+
+async function listRecentRescues(_req, res) {
+  const claims = await Claim.find({ status: 'completed' })
+    .select('buyerName qty batchId merchantId updatedAt')
+    .populate({ path: 'batchId', select: 'itemName' })
+    .populate({ path: 'merchantId', select: 'storeName municipality' })
+    .sort({ updatedAt: -1 })
+    .limit(10)
+    .lean();
+
+  const rescues = claims.map((claim) => ({
+    id: claim._id.toString(),
+    buyerFirstName: String(claim.buyerName || 'Community member').trim().split(/\s+/)[0] || 'Community member',
+    quantity: Number(claim.qty) || 0,
+    itemName: claim.batchId?.itemName || 'surplus food',
+    storeName: claim.merchantId?.storeName || 'a local food partner',
+    municipality: claim.merchantId?.municipality || 'Iloilo Province',
+    completedAt: claim.updatedAt,
+  }));
+  res.set('Cache-Control', 'no-store').json({ success: true, data: { rescues } });
+}
+
+module.exports = { createClaim, cancelClaim, verifyClaim, listMerchantActiveClaims, merchantImpact, getClaimStatus, listRecentRescues };

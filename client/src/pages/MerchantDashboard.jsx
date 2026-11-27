@@ -94,6 +94,7 @@ function downloadCertificate(storeName, completedRescues) {
 export default function MerchantDashboard({ session, onBrowse, onNotice }) {
   const [batches, setBatches] = useState([]);
   const [restockBatch, setRestockBatch] = useState(null);
+  const [previewUrl, setPreviewUrl] = useState('');
   const [inventoryView, setInventoryView] = useState('active');
   const [loadingBatches, setLoadingBatches] = useState(true);
   const [batchError, setBatchError] = useState('');
@@ -175,12 +176,14 @@ export default function MerchantDashboard({ session, onBrowse, onNotice }) {
   async function createBatch(form) {
     await api.post('/batches', form, { headers: { 'Content-Type': 'multipart/form-data' } });
     setRestockBatch(null);
+    setPreviewUrl('');
     await reloadBatches();
     onNotice?.('Your surplus batch is live on the marketplace.');
   }
 
   function chooseRestock(batch) {
     setRestockBatch(batch);
+    setPreviewUrl(typeof batch.photoUrl === 'string' ? batch.photoUrl.trim() : '');
     document.getElementById('merchant-batch-form')?.scrollIntoView({ behavior: 'smooth', block: 'start' });
   }
 
@@ -188,6 +191,7 @@ export default function MerchantDashboard({ session, onBrowse, onNotice }) {
     setBusyClaim(qrToken);
     try {
       await api.patch(`/claims/${qrToken}/verify`);
+      window.dispatchEvent(new Event('salbarkain:rescue-completed'));
       await Promise.all([reloadQueue(), reloadImpact(), reloadBatches()]);
       onNotice?.('Pickup handed off and verified.');
     } catch (err) {
@@ -233,7 +237,7 @@ export default function MerchantDashboard({ session, onBrowse, onNotice }) {
     </section>
 
     <section className="merchant-work-grid" aria-label="Manage surplus">
-      <div id="merchant-batch-form"><MerchantBatchForm onCreated={createBatch} onNotice={onNotice} disabled={!isVerified} restockBatch={restockBatch} /></div>
+      <div id="merchant-batch-form"><MerchantBatchForm onCreated={createBatch} onNotice={onNotice} disabled={!isVerified} restockBatch={restockBatch} previewUrl={previewUrl} /></div>
       <section className="panel merchant-inventory-panel">
         <div className="merchant-inventory-heading"><div><h2>Your listed batches</h2><p className="panel-subtitle">Review what is live and repost a previous batch when it returns.</p></div><div className="merchant-inventory-filters" role="group" aria-label="Filter listed batches"><button type="button" className={inventoryView === 'active' ? 'active' : ''} aria-pressed={inventoryView === 'active'} onClick={() => setInventoryView('active')}>Active <span>{activeBatches.length}</span></button><button type="button" className={inventoryView === 'expired' ? 'active' : ''} aria-pressed={inventoryView === 'expired'} onClick={() => setInventoryView('expired')}>Expired / archive <span>{expiredBatches.length}</span></button></div></div>
         {loadingBatches ? <InventorySkeletons /> : batchError ? <div className="merchant-inline-error" role="alert">{batchError}<button type="button" className="text-button" onClick={() => void reloadBatches()}>Try again</button></div> : listedBatches.length === 0 ? <div className="merchant-queue-empty"><strong>{inventoryView === 'active' ? 'No live batches right now' : 'No expired batches to archive'}</strong><span>{inventoryView === 'active' ? 'Post tonight’s surplus and it will appear in the public marketplace.' : 'Past batches will collect here so they do not crowd your live inventory.'}</span></div> : <div className="inventory-list merchant-inventory-list">{listedBatches.map(batch => <article className="inventory-row merchant-inventory-row" key={batch._id}>

@@ -108,6 +108,8 @@ function uploadImage(buffer) {
 
 async function createBatch(req, res) {
   const restockBatchId = typeof req.body?.restockBatchId === 'string' ? req.body.restockBatchId : '';
+  const existingPhotoUrl = typeof req.body?.existingPhotoUrl === 'string' ? req.body.existingPhotoUrl.trim() : '';
+  if (existingPhotoUrl && !restockBatchId) throw httpError(400, 'INVALID_RESTOCK_PHOTO', 'Choose one of your own previous batches to reuse its photo.');
   if (!req.file && !restockBatchId) throw httpError(400, 'PHOTO_REQUIRED', 'Attach a batch photo or select a previous batch to restock.');
   const cloudConfig = cloudinary.config();
   if (req.file && ![cloudConfig.cloud_name, cloudConfig.api_key, cloudConfig.api_secret].every((value) => typeof value === 'string' && value.trim())) {
@@ -121,6 +123,9 @@ async function createBatch(req, res) {
   if (restockBatchId) {
     restockSource = await Batch.findOne({ _id: restockBatchId, merchantId: req.user.id }).select('photoUrl photoPublicId').lean();
     if (!restockSource) throw httpError(404, 'RESTOCK_SOURCE_NOT_FOUND', 'Choose one of your previous batches to reuse its photo.');
+    if (existingPhotoUrl && normalizeDemoPhotoUrl(existingPhotoUrl) !== normalizeDemoPhotoUrl(restockSource.photoUrl)) {
+      throw httpError(400, 'RESTOCK_PHOTO_MISMATCH', 'The saved photo does not match the selected previous batch. Refresh your inventory and try again.');
+    }
   }
   const uploaded = req.file ? await uploadImage(req.file.buffer) : null;
   try {

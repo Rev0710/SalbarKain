@@ -33,6 +33,7 @@ export default function MerchantScanner({ onNotice, onCompleted }) {
       const claim = data.data.claim;
       setFeedback({ kind: 'success', text: `Pickup verified for ${claim.buyerName} · ${claim.qty} portion(s).` });
       setManualToken('');
+      window.dispatchEvent(new Event('salbarkain:rescue-completed'));
       onNotice?.('Pickup completed and verified.');
       await stopScanner();
       await onCompleted?.();
