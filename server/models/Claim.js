@@ -14,9 +14,13 @@ const claimSchema = new Schema({
   safetyAcknowledged: { type: Boolean, required: true, default: false },
   pickupDeadline: { type: Date, required: true, index: true },
   status: { type: String, enum: ['pending', 'completed', 'expired', 'cancelled'], default: 'pending', required: true, index: true },
+  rating: { type: Number, min: 1, max: 5, default: null },
+  reviewComment: { type: String, maxlength: 240, trim: true, default: '' },
+  reviewedAt: { type: Date, default: null },
 }, { timestamps: true, strict: 'throw' });
 
 claimSchema.index({ status: 1, pickupDeadline: 1 });
+claimSchema.index({ merchantId: 1, status: 1, rating: 1, reviewedAt: -1 });
 claimSchema.index({ deviceToken: 1 }, {
   unique: true,
   partialFilterExpression: { status: 'pending' },

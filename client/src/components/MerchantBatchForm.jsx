@@ -13,20 +13,38 @@ function validPreviewUrl(value) {
   } catch { return false; }
 }
 
-export default function MerchantBatchForm({ onCreated, onNotice, disabled = false, restockBatch = null, previewUrl = '' }) {
+function closingCutoff(time = '20:30') {
+  const [hours, minutes] = time.split(':').map(Number);
+  const date = new Date(); date.setHours(hours || 0, minutes || 0, 0, 0);
+  if (date.getTime() < Date.now() + 15 * 60 * 1000) date.setDate(date.getDate() + 1);
+  return localDateTime(date);
+}
+
+export default function MerchantBatchForm({ onCreated, onNotice, disabled = false, restockBatch = null, previewUrl = '', storeProfile = null }) {
   const [itemName, setItemName] = useState(''); const [quantity, setQuantity] = useState(''); const [price, setPrice] = useState(''); const [donation, setDonation] = useState(false);
   const [storageType, setStorageType] = useState('room_temp_baked'); const [consumeWithin, setConsumeWithin] = useState('tonight'); const [allergens, setAllergens] = useState(['None / Allergen-Free']); const [ngoPriorityEnabled, setNgoPriorityEnabled] = useState(false);
   const [flashDrop, setFlashDrop] = useState(false); const [magicBayong, setMagicBayong] = useState(false); const [originalPrice, setOriginalPrice] = useState(''); const [retailValue, setRetailValue] = useState(''); const [freshnessAttested, setFreshnessAttested] = useState(false);
   const [keyIngredients, setKeyIngredients] = useState('');
-  const [expiresAt, setExpiresAt] = useState(() => localDateTime(new Date(Date.now() + 2 * 60 * 60 * 1000)));
+  const [expiresAt, setExpiresAt] = useState(() => closingCutoff()); const [expiryEdited, setExpiryEdited] = useState(false);
   const [safeUntil, setSafeUntil] = useState(() => localDateTime(new Date(Date.now() + 4 * 60 * 60 * 1000)));
-  const [photo, setPhoto] = useState(null); const [preview, setPreview] = useState(''); const [error, setError] = useState(''); const [busy, setBusy] = useState(false);
+  const [photo, setPhoto] = useState(null); const [existingPhotoUrl, setExistingPhotoUrl] = useState(''); const [preview, setPreview] = useState(''); const [error, setError] = useState(''); const [busy, setBusy] = useState(false);
+
+  useEffect(() => {
+    if (restockBatch) return;
+    setAllergens(storeProfile?.defaultAllergens?.length ? storeProfile.defaultAllergens : ['None / Allergen-Free']);
+    if (storeProfile?.defaultClosingTime && !expiryEdited) {
+      const cutoff = closingCutoff(storeProfile.defaultClosingTime);
+      setExpiresAt(cutoff);
+      setSafeUntil(localDateTime(new Date(new Date(cutoff).getTime() + 2 * 60 * 60 * 1000)));
+    }
+  }, [storeProfile, restockBatch, expiryEdited]);
 
   useEffect(() => {
     if (!restockBatch) return;
     setItemName(restockBatch.itemName || ''); setPrice(restockBatch.price == null ? '' : String(restockBatch.price)); setDonation(Boolean(restockBatch.isDonationOnly));
     setStorageType(restockBatch.storageType || 'room_temp_baked'); setConsumeWithin(restockBatch.consumeWithin || 'tonight'); setAllergens(restockBatch.allergens?.length ? restockBatch.allergens : ['None / Allergen-Free']);
-    setNgoPriorityEnabled(false); setPhoto(null); setError('');
+    const nextCutoff = closingCutoff(storeProfile?.defaultClosingTime || '20:30'); setExpiresAt(nextCutoff); setSafeUntil(localDateTime(new Date(new Date(nextCutoff).getTime() + 2 * 60 * 60 * 1000)));
+    setNgoPriorityEnabled(false); setPhoto(null); setExistingPhotoUrl(restockBatch.photoUrl || ''); setError(''); setExpiryEdited(false);
     setFlashDrop(false); setMagicBayong(false); setOriginalPrice(''); setRetailValue(''); setFreshnessAttested(false); setKeyIngredients(restockBatch.keyIngredients || '');
   }, [restockBatch]);
 
@@ -54,7 +72,6 @@ export default function MerchantBatchForm({ onCreated, onNotice, disabled = fals
   async function submit(event) {
     event.preventDefault(); const formElement = event.currentTarget; setBusy(true); setError('');
     try {
-      if (!photo && !restockBatch) throw new Error('Add one clear food photo or choose a previous batch to repost.');
       if (new Date(expiresAt).getTime() <= Date.now()) throw new Error('Choose a pickup cutoff later than now.');
       if (new Date(expiresAt).getTime() < Date.now() + 15 * 60 * 1000) throw new Error('Pickup cutoff must be at least 15 minutes from now.');
       if (new Date(safeUntil).getTime() < new Date(expiresAt).getTime()) throw new Error('Safe until must be at or after the pickup cutoff.');
@@ -65,15 +82,15 @@ export default function MerchantBatchForm({ onCreated, onNotice, disabled = fals
       if (magicBayong && (!Number.isFinite(Number(retailValue)) || Number(retailValue) <= Number(price))) throw new Error('Estimated retail value must be higher than the Bayong price.');
       const body = new FormData();
       if (photo) { const compressed = await imageCompression(photo, { maxSizeMB: 1, maxWidthOrHeight: 1600, useWebWorker: true }); body.append('photo', compressed, compressed.name || 'surplus.jpg'); }
+      else if (/^https?:\/\//i.test(existingPhotoUrl)) body.append('existingPhotoUrl', existingPhotoUrl);
       if (restockBatch) {
         body.append('restockBatchId', restockBatch._id);
-        if (!photo && (previewUrl || restockBatch.photoUrl)) body.append('existingPhotoUrl', previewUrl || restockBatch.photoUrl);
       }
       body.append('itemName', itemName.trim()); body.append('quantity', quantity); body.append('price', donation ? '0' : price); body.append('isDonationOnly', String(donation)); body.append('expiresAt', new Date(expiresAt).toISOString());
       body.append('storageType', storageType); body.append('consumeWithin', consumeWithin); body.append('allergens', JSON.stringify(allergens)); body.append('ngoPriorityEnabled', String(ngoPriorityEnabled));
       body.append('safeUntil', new Date(safeUntil).toISOString()); body.append('freshnessAttested', String(freshnessAttested)); body.append('isFlashDropEnabled', String(flashDrop)); body.append('isMagicBayong', String(magicBayong)); body.append('originalPrice', originalPrice); body.append('retailValue', magicBayong ? retailValue : ''); body.append('keyIngredients', keyIngredients);
       await onCreated(body);
-      setItemName(''); setQuantity(''); setPrice(''); setDonation(false); setStorageType('room_temp_baked'); setConsumeWithin('tonight'); setAllergens(['None / Allergen-Free']); setNgoPriorityEnabled(false); setFlashDrop(false); setMagicBayong(false); setOriginalPrice(''); setRetailValue(''); setFreshnessAttested(false); setKeyIngredients(''); setExpiresAt(localDateTime(new Date(Date.now() + 2 * 60 * 60 * 1000))); setSafeUntil(localDateTime(new Date(Date.now() + 4 * 60 * 60 * 1000))); setPhoto(null); formElement.reset();
+      setItemName(''); setQuantity(''); setPrice(''); setDonation(false); setStorageType('room_temp_baked'); setConsumeWithin('tonight'); setAllergens(storeProfile?.defaultAllergens?.length ? storeProfile.defaultAllergens : ['None / Allergen-Free']); setNgoPriorityEnabled(false); setFlashDrop(false); setMagicBayong(false); setOriginalPrice(''); setRetailValue(''); setFreshnessAttested(false); setKeyIngredients(''); const nextCutoff = closingCutoff(storeProfile?.defaultClosingTime || '20:30'); setExpiresAt(nextCutoff); setSafeUntil(localDateTime(new Date(new Date(nextCutoff).getTime() + 2 * 60 * 60 * 1000))); setExpiryEdited(false); setPhoto(null); setExistingPhotoUrl(''); formElement.reset();
     } catch (err) {
       const message = err.response?.data?.message || err.message || 'Could not post this batch.';
       setError(message); onNotice?.(message);
@@ -95,12 +112,12 @@ export default function MerchantBatchForm({ onCreated, onNotice, disabled = fals
       <label className="field-label">Key ingredients <span className="form-note">Optional · 100 characters max</span><input className="field-input" maxLength="100" value={keyIngredients} onChange={e => setKeyIngredients(e.target.value)} placeholder="e.g. flour, egg, milk, shrimp" /></label>
       <label className="checkbox-row"><input type="checkbox" checked={ngoPriorityEnabled} disabled={donation} onChange={e => setNgoPriorityEnabled(e.target.checked)} /> Give verified NGOs a 15-minute priority window</label>
       <p className="form-note">During the first 15 minutes, only verified NGO partners can claim. Any remaining portions then open to other buyers. Free donation-only batches always remain NGO-only.</p>
-      <label className="field-label">Pickup cutoff<input className="field-input" type="datetime-local" required min={localDateTime(new Date())} value={expiresAt} onChange={e => setExpiresAt(e.target.value)} /></label>
+      <label className="field-label">Pickup cutoff<input className="field-input" type="datetime-local" required min={localDateTime(new Date())} value={expiresAt} onChange={e => { setExpiryEdited(true); setExpiresAt(e.target.value); }} />{storeProfile?.defaultClosingTime && <span className="form-note">Prefilled from your usual {storeProfile.defaultClosingTime} closing time.</span>}</label>
       <label className="field-label">Food safe until<input className="field-input" type="datetime-local" required min={expiresAt} value={safeUntil} onChange={e => setSafeUntil(e.target.value)} /><span className="form-note">Must be at or after pickup cutoff.</span></label>
       <label className="safety-acknowledgement"><input type="checkbox" checked={freshnessAttested} onChange={e => setFreshnessAttested(e.target.checked)} required /><span>Prepared/Baked Today — Safe for Consumption</span></label>
-      <label className="photo-drop">{restockBatch ? 'Saved batch photo · select a new photo to replace it' : 'Batch photo · JPG, PNG or WebP'}<input type="file" accept="image/jpeg,image/png,image/webp" required={!restockBatch} onChange={choosePhoto} />{validPreviewUrl(preview) && <img key={preview} className="photo-preview" src={preview} alt="Preview of selected surplus batch" onError={event => { event.currentTarget.style.display = 'none'; }} />}</label>
+      <label className="photo-drop">{restockBatch ? 'Saved batch photo · select a new photo to replace it' : 'Batch photo · optional, JPG/PNG/WebP'}<input type="file" accept="image/jpeg,image/png,image/webp" onChange={choosePhoto} />{validPreviewUrl(preview) && <img key={preview} className="photo-preview" src={preview} alt="Preview of selected surplus batch" onError={event => { event.currentTarget.style.display = 'none'; }} />}</label>
       {error && <p className="alert-banner" role="alert">{error}</p>}
-      <button className="primary-button w-full" disabled={busy || (!photo && !restockBatch)}>{busy ? 'Compressing and posting…' : restockBatch ? 'Repost batch' : 'Post surplus batch'}</button>
+      <button className="primary-button w-full" disabled={busy}>{busy ? 'Compressing and posting…' : restockBatch ? 'Repost batch' : 'Post surplus batch'}</button>
     </fieldset>
   </form></section>;
 }

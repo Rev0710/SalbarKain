@@ -6,7 +6,7 @@ const User = require('../models/User');
 const ImpactEntry = require('../models/ImpactEntry');
 const httpError = require('../utils/httpError');
 const normalizePhone = require('../utils/phone');
-const { invalidateBatchCache } = require('../utils/cache');
+const { batchCache, invalidateBatchCache } = require('../utils/cache');
 const { expireClaimAndRestore } = require('../utils/claimExpiry');
 
 function validateClaimBody(body) {
@@ -283,6 +283,46 @@ async function verifyClaim(req, res) {
   });
 }
 
+async function reviewClaim(req, res) {
+  const qrToken = normalizeQrToken(req.params.qrToken);
+  if (!qrToken) throw httpError(404, 'CLAIM_NOT_FOUND', 'Pickup pass was not found.');
+  const rating = Number(req.body?.rating);
+  if (!Number.isInteger(rating) || rating < 1 || rating > 5) throw httpError(400, 'INVALID_RATING', 'Choose a whole-star rating from 1 to 5.');
+  if (req.body?.reviewComment !== undefined && typeof req.body.reviewComment !== 'string') throw httpError(400, 'INVALID_REVIEW_COMMENT', 'Review comment must be text.');
+  const reviewComment = (req.body?.reviewComment || '').trim();
+  if (reviewComment.length > 240) throw httpError(400, 'INVALID_REVIEW_COMMENT', 'Review comment must be 240 characters or fewer.');
+
+  const session = await mongoose.startSession();
+  let summary;
+  try {
+    await session.withTransaction(async () => {
+      const claim = await Claim.findOne({ qrToken }).session(session).select('+qrToken status rating merchantId').lean();
+      if (!claim) throw httpError(404, 'CLAIM_NOT_FOUND', 'Pickup pass was not found.');
+      if (claim.status !== 'completed') throw httpError(403, 'PICKUP_NOT_VERIFIED', 'Only a pickup verified by the store can be reviewed.');
+      if (claim.rating != null) throw httpError(409, 'REVIEW_ALREADY_SUBMITTED', 'A rating has already been submitted for this pickup.');
+
+      const saved = await Claim.findOneAndUpdate(
+        { _id: claim._id, status: 'completed', rating: null },
+        { $set: { rating, reviewComment, reviewedAt: new Date() } },
+        { session, new: true, runValidators: true },
+      );
+      if (!saved) throw httpError(409, 'REVIEW_ALREADY_SUBMITTED', 'A rating has already been submitted for this pickup.');
+
+      const [totals] = await Claim.aggregate([
+        { $match: { merchantId: claim.merchantId, status: 'completed', rating: { $gte: 1, $lte: 5 } } },
+        { $group: { _id: null, averageRating: { $avg: '$rating' }, totalReviews: { $sum: 1 } } },
+      ]).session(session);
+      summary = { averageRating: Number((totals?.averageRating || 0).toFixed(2)), totalReviews: totals?.totalReviews || 0 };
+      const merchant = await User.updateOne({ _id: claim.merchantId, role: 'merchant' }, { $set: summary }, { session });
+      if (!merchant.matchedCount) throw httpError(404, 'MERCHANT_NOT_FOUND', 'The store for this pickup could not be found.');
+    });
+  } finally { await session.endSession(); }
+
+  batchCache.flushAll();
+  invalidateBatchCache();
+  res.status(201).json({ success: true, data: { ...summary, rating, reviewComment } });
+}
+
 async function listMerchantActiveClaims(req, res) {
   const now = new Date();
   const claims = await Claim.find({
@@ -415,4 +455,4 @@ async function listRecentRescues(_req, res) {
   res.set('Cache-Control', 'no-store').json({ success: true, data: { rescues } });
 }
 
-module.exports = { createClaim, cancelClaim, verifyClaim, listMerchantActiveClaims, merchantImpact, getClaimStatus, listRecentRescues, previewClaim };
+module.exports = { createClaim, cancelClaim, verifyClaim, reviewClaim, listMerchantActiveClaims, merchantImpact, getClaimStatus, listRecentRescues, previewClaim };

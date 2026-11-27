@@ -128,7 +128,7 @@ function AppShell() {
       const { data } = await api.post('/claims', { batchId: claimBatch._id || claimBatch.id, qty, buyerName, phone, deviceToken: getDeviceToken(), safetyAcknowledged });
       const claim = data.data.claim;
       const coordinates = claimBatch.merchantId?.location?.coordinates || null;
-      const pass = { id: claim.id, qrToken: claim.qrToken, batchId: claim.batchId, qty: claim.qty, quantity: claim.qty, priceAtClaim: claim.priceAtClaim, totalPrice: Number((Number(claim.priceAtClaim || 0) * Number(claim.qty || 1)).toFixed(2)), pickupDeadline: claim.pickupDeadline, status: claim.status, itemName: claimBatch.itemName, storeName: claimBatch.merchantId?.storeName || 'Local food partner', storeAddress: claimBatch.merchantId?.address || '', coordinates, batch: claimBatch };
+      const pass = { id: claim.id, qrToken: claim.qrToken, batchId: claim.batchId, qty: claim.qty, quantity: claim.qty, priceAtClaim: claim.priceAtClaim, totalPrice: Number((Number(claim.priceAtClaim || 0) * Number(claim.qty || 1)).toFixed(2)), pickupDeadline: claim.pickupDeadline, status: claim.status, itemName: claimBatch.itemName, storeName: claimBatch.merchantId?.storeName || 'Local food partner', storeAddress: claimBatch.merchantId?.address || '', storeContactNumber: claimBatch.merchantId?.contactNumber || '', pickupInstructions: claimBatch.merchantId?.pickupInstructions || '', coordinates, batch: claimBatch };
       savePass(pass); setClaimBatch(null); setPickupPass(pass); setMarketRefresh(value => value + 1);
     } catch (error) {
       if (['BATCH_UNAVAILABLE', 'PICKUP_PASS_EXPIRED', 'BATCH_EXPIRED'].includes(error.response?.data?.code)) {

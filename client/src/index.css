@@ -798,3 +798,69 @@ img,video,canvas,iframe,svg { max-width:100%; }
   .mobile-count > .impact-counter { max-width:132px; padding-inline:7px; }
   .mobile-count > .impact-counter > .impact-pill-text { font-size:9px; }
 }
+
+.merchant-dashboard-tabs { display:flex; gap:8px; margin:0 0 18px; border-bottom:1px solid #E2E8F0; }
+.merchant-dashboard-tabs button { min-height:44px; border:0; border-bottom:2px solid transparent; padding:0 14px; background:transparent; color:#475569; font-weight:650; cursor:pointer; }
+.merchant-dashboard-tabs button.active { border-bottom-color:#15803D; color:#15803D; }
+.merchant-profile-panel { display:grid; gap:20px; }
+.merchant-profile-heading { display:flex; align-items:flex-start; justify-content:space-between; gap:16px; }
+.merchant-profile-heading h2 { margin:0; color:#0F172A; font-size:24px; }
+.merchant-profile-status { flex:none; border-radius:999px; padding:7px 11px; font-size:12px; font-weight:700; }
+.merchant-profile-status.verified { background:#15803D; color:#FFFFFF; }
+.merchant-profile-status.pending { background:#FFFBEB; color:#D97706; }
+.merchant-profile-identity { display:flex; align-items:center; gap:16px; border:1px solid #E2E8F0; border-radius:10px; padding:14px; background:#F8FAFC; }
+.merchant-profile-photo { display:grid; width:96px; height:80px; flex:none; place-items:center; overflow:hidden; border:1px solid #E2E8F0; border-radius:8px; background:#FFFFFF; color:#15803D; font-size:28px; font-weight:750; }
+.merchant-profile-photo img { width:100%; height:100%; object-fit:cover; }
+.merchant-profile-facts { display:grid; min-width:0; gap:4px; }
+.merchant-profile-facts h3,.merchant-profile-facts p { margin:0; }
+.merchant-profile-facts h3 { color:#0F172A; font-size:17px; }
+.merchant-profile-facts p,.merchant-profile-facts a { color:#475569; font-size:13px; }
+.merchant-profile-facts a { color:#15803D; text-decoration:underline; text-underline-offset:2px; }
+.merchant-profile-form { max-width:780px; }
+.merchant-profile-recognition { display:grid; gap:10px; border-top:1px solid #E2E8F0; padding-top:18px; }
+.merchant-profile-recognition > div:first-child { display:flex; justify-content:space-between; gap:12px; color:#0F172A; }
+.merchant-profile-recognition > div:first-child span { color:#64748B; font-size:13px; }
+.pickup-instructions-note { margin:8px 0 0; border:1px solid #E2E8F0; border-radius:8px; padding:10px 12px; background:#F8FAFC; color:#0F172A; font-size:13px; text-align:left; }
+.merchant-rating-pill { display:inline-flex; align-items:center; margin-left:5px; border:1px solid #FDE68A; border-radius:999px; padding:1px 6px; color:#B45309; background:#FFFBEB; font-size:10px; font-weight:700; line-height:1.5; vertical-align:1px; }
+.merchant-review-list { display:grid; gap:12px; }
+.merchant-review-card { display:grid; gap:7px; border:1px solid #E2E8F0; border-radius:9px; padding:14px; background:#FFFFFF; }
+.merchant-review-topline { display:flex; align-items:center; justify-content:space-between; gap:10px; color:#0F172A; }
+.merchant-review-stars { color:#D97706; font-weight:800; letter-spacing:1px; white-space:nowrap; }
+.merchant-review-meta { color:#64748B; font-size:12px; }
+.merchant-review-comment { margin:0; color:#334155; font-size:14px; line-height:1.5; overflow-wrap:anywhere; }
+.merchant-reviews-summary { display:flex; align-items:baseline; gap:9px; margin:12px 0 18px; }
+.merchant-reviews-summary strong { color:#D97706; font-size:28px; }
+.merchant-reviews-summary span { color:#64748B; font-size:13px; }
+.pass-complete-dialog { border-color:rgb(255 255 255 / 20%); color:#FFFFFF; background:rgb(11 41 21 / 88%); -webkit-backdrop-filter:blur(24px); backdrop-filter:blur(24px); box-shadow:0 24px 70px rgb(2 6 23 / 38%); }
+.pass-complete-dialog .pass-result-icon.success { border-color:rgb(74 222 128 / 45%); color:#4ADE80; background:rgb(21 128 61 / 20%); }
+.pass-complete-dialog .pass-impact-complete { border-color:rgb(255 255 255 / 18%); color:#DCFCE7; background:rgb(255 255 255 / 9%); }
+.pass-complete-dialog .pass-impact-complete strong,.pass-complete-dialog .pass-impact-complete span { color:#FFFFFF; }
+.pass-complete-dialog .primary-button { border-color:#15803D; color:#FFFFFF; background:#15803D; }
+.pass-rating-form { display:grid; gap:12px; margin-top:18px; text-align:left; }
+.pass-rating-stars { display:flex; justify-content:center; gap:4px; }
+.pass-rating-stars button { display:grid; width:48px; height:48px; place-items:center; border:0; border-radius:10px; color:rgb(255 255 255 / 30%); background:transparent; font-size:30px; cursor:pointer; }
+.pass-rating-stars button[aria-pressed="true"] { color:#D97706; }
+.pass-rating-stars button:focus-visible { outline:2px solid #FBBF24; outline-offset:2px; }
+.pass-rating-sentiment { min-height:20px; color:#FDE68A; font-size:13px; font-weight:650; text-align:center; }
+.pass-rating-form textarea { width:100%; resize:vertical; border:1px solid rgb(255 255 255 / 20%); border-radius:10px; padding:12px; color:#FFFFFF; background:rgb(255 255 255 / 10%); font:inherit; font-size:14px; }
+.pass-rating-form textarea::placeholder { color:rgb(255 255 255 / 60%); }
+.pass-rating-actions { display:grid; justify-items:center; gap:5px; }
+.pass-rating-submit { width:100%; min-height:48px; border:0; border-radius:10px; color:#FFFFFF; background:#15803D; font-weight:700; cursor:pointer; }
+.pass-rating-submit:hover { background:#166534; }
+.pass-rating-skip { min-height:44px; border:0; color:rgb(255 255 255 / 75%); background:transparent; font-size:14px; cursor:pointer; }
+.pass-rating-skip:hover { color:#FFFFFF; }
+.pass-rating-prompt { margin:0 0 4px; color:#FFFFFF; font-size:14px; font-weight:700; text-align:center; }
+.review-thank-you { margin:20px 0 0; border:1px solid rgb(74 222 128 / 35%); border-radius:12px; padding:14px; color:#DCFCE7; background:rgb(21 128 61 / 24%); font-weight:650; }
+.review-error { margin:0; color:#FCD34D; font-size:13px; }
+.public-merchant-reviews { display:grid; gap:8px; margin-top:12px; border-top:1px solid #E2E8F0; padding-top:12px; }
+.public-merchant-reviews h3 { margin:0; color:#0F172A; font-size:14px; }
+.public-merchant-reviews article { display:grid; gap:5px; border:1px solid #E2E8F0; border-radius:7px; padding:9px 10px; background:#FFFFFF; }
+.public-merchant-reviews article > div { display:flex; justify-content:space-between; gap:8px; color:#0F172A; font-size:12px; }
+.public-merchant-reviews article p { margin:0; color:#475569; font-size:12px; overflow-wrap:anywhere; }
+@media(max-width:640px) {
+  .merchant-profile-heading { display:grid; }
+  .merchant-profile-status { justify-self:start; }
+  .merchant-profile-identity { align-items:flex-start; }
+  .merchant-profile-photo { width:72px; height:72px; }
+  .merchant-profile-recognition > div:first-child { display:grid; }
+}

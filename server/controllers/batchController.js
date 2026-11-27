@@ -109,8 +109,7 @@ function uploadImage(buffer) {
 async function createBatch(req, res) {
   const restockBatchId = typeof req.body?.restockBatchId === 'string' ? req.body.restockBatchId : '';
   const existingPhotoUrl = typeof req.body?.existingPhotoUrl === 'string' ? req.body.existingPhotoUrl.trim() : '';
-  if (existingPhotoUrl && !restockBatchId) throw httpError(400, 'INVALID_RESTOCK_PHOTO', 'Choose one of your own previous batches to reuse its photo.');
-  if (!req.file && !restockBatchId) throw httpError(400, 'PHOTO_REQUIRED', 'Attach a batch photo or select a previous batch to restock.');
+  if (existingPhotoUrl && !/^https?:\/\//i.test(existingPhotoUrl)) throw httpError(400, 'INVALID_RESTOCK_PHOTO', 'Only a saved, permanent photo URL can be reused.');
   const cloudConfig = cloudinary.config();
   if (req.file && ![cloudConfig.cloud_name, cloudConfig.api_key, cloudConfig.api_secret].every((value) => typeof value === 'string' && value.trim())) {
     throw httpError(503, 'UPLOAD_NOT_CONFIGURED', 'Cloudinary is not configured on this server.');
@@ -120,11 +119,14 @@ async function createBatch(req, res) {
   const ngoPriorityEnabled = input.ngoPriorityEnabled;
   delete input.ngoPriorityEnabled;
   let restockSource;
-  if (restockBatchId) {
-    restockSource = await Batch.findOne({ _id: restockBatchId, merchantId: req.user.id }).select('photoUrl photoPublicId').lean();
-    if (!restockSource) throw httpError(404, 'RESTOCK_SOURCE_NOT_FOUND', 'Choose one of your previous batches to reuse its photo.');
+  if (!req.file && (restockBatchId || existingPhotoUrl)) {
+    const sourceFilter = { merchantId: req.user.id };
+    if (restockBatchId) sourceFilter._id = restockBatchId;
+    if (existingPhotoUrl) sourceFilter.photoUrl = existingPhotoUrl;
+    restockSource = await Batch.findOne(sourceFilter).select('photoUrl photoPublicId').lean();
+    if (!restockSource) throw httpError(404, 'RESTOCK_SOURCE_NOT_FOUND', 'Choose a saved photo from one of your own previous batches.');
     if (existingPhotoUrl && normalizeDemoPhotoUrl(existingPhotoUrl) !== normalizeDemoPhotoUrl(restockSource.photoUrl)) {
-      throw httpError(400, 'RESTOCK_PHOTO_MISMATCH', 'The saved photo does not match the selected previous batch. Refresh your inventory and try again.');
+      throw httpError(400, 'RESTOCK_PHOTO_MISMATCH', 'The saved photo does not match your selected previous batch. Refresh your inventory and try again.');
     }
   }
   const uploaded = req.file ? await uploadImage(req.file.buffer) : null;
@@ -133,9 +135,10 @@ async function createBatch(req, res) {
       ...input,
       ngoPriorityUntil: ngoPriorityEnabled && !input.isDonationOnly ? new Date(Date.now() + 15 * 60 * 1000) : null,
       merchantId: req.user.id,
-      photoUrl: uploaded?.secure_url || restockSource.photoUrl,
-      photoPublicId: uploaded?.public_id || restockSource.photoPublicId,
+      photoUrl: uploaded?.secure_url || restockSource?.photoUrl || '/demo-images/pandesal.svg',
+      photoPublicId: uploaded?.public_id || restockSource?.photoPublicId,
     });
+    batchCache.flushAll();
     invalidateBatchCache();
     res.status(201).json({
       success: true,
@@ -225,7 +228,7 @@ async function listBatches(req, res) {
     }
 
     batches = await Batch.find(filter)
-      .populate('merchantId', 'storeName category address barangay municipality location verified verificationStatus storefrontPhotoUrl')
+      .populate('merchantId', 'storeName category address barangay municipality location verified verificationStatus storefrontPhotoUrl contactNumber pickupInstructions averageRating totalReviews')
       .sort({ expiresAt: 1 })
       .limit(hasLat ? 1000 : pageSize)
       .lean();
@@ -263,7 +266,7 @@ async function listVerifiedPartners(_req, res) {
       role: 'merchant',
       $or: [{ verificationStatus: 'verified' }, { verified: true }],
     })
-      .select('_id storeName category address barangay municipality location storefrontPhotoUrl')
+      .select('_id storeName category address barangay municipality location storefrontPhotoUrl averageRating totalReviews')
       .sort({ municipality: 1, barangay: 1, storeName: 1 })
       .lean();
 
@@ -299,6 +302,8 @@ async function listVerifiedPartners(_req, res) {
         municipality: store.municipality,
         location: store.location,
         storefrontPhotoUrl: store.storefrontPhotoUrl || '',
+        averageRating: Number(store.averageRating) || 0,
+        totalReviews: Number(store.totalReviews) || 0,
         verificationStatus: 'verified',
         activeBatchCount: summary?.activeBatchCount || 0,
         activePackCount: summary?.activePackCount || 0,

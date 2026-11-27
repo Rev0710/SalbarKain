@@ -3,7 +3,7 @@ const { rateLimit } = require('express-rate-limit');
 const asyncHandler = require('../middleware/asyncHandler');
 const { claimLimiter } = require('../middleware/rateLimiters');
 const { authenticate, authorizeRoles, optionalAuth, requireVerified } = require('../middleware/auth');
-const { createClaim, cancelClaim, verifyClaim, listMerchantActiveClaims, merchantImpact, getClaimStatus, listRecentRescues, previewClaim } = require('../controllers/claimController');
+const { createClaim, cancelClaim, verifyClaim, reviewClaim, listMerchantActiveClaims, merchantImpact, getClaimStatus, listRecentRescues, previewClaim } = require('../controllers/claimController');
 const { myImpact } = require('../controllers/impactController');
 
 const router = express.Router();
@@ -16,5 +16,6 @@ router.get('/:qrToken/preview', rateLimit({ windowMs: 15 * 60 * 1000, limit: 30,
 router.post('/', claimLimiter, optionalAuth, asyncHandler(createClaim));
 router.patch('/:qrToken/cancel', asyncHandler(cancelClaim));
 router.patch('/:qrToken/verify', rateLimit({ windowMs: 15 * 60 * 1000, limit: 30, standardHeaders: 'draft-8', legacyHeaders: false }), authenticate, authorizeRoles('merchant'), requireVerified, asyncHandler(verifyClaim));
+router.post('/:qrToken/review', rateLimit({ windowMs: 15 * 60 * 1000, limit: 10, standardHeaders: 'draft-8', legacyHeaders: false }), asyncHandler(reviewClaim));
 
 module.exports = router;

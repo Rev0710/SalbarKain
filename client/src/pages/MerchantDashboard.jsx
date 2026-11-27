@@ -91,6 +91,69 @@ function downloadCertificate(storeName, completedRescues) {
   pdf.save('salbarkain-zero-waste-partner.pdf');
 }
 
+function StoreProfilePanel({ profile, onSaved, completedRescues }) {
+  const [form, setForm] = useState({ contactNumber: '', defaultClosingTime: '20:30', pickupInstructions: '', defaultAllergens: ['None / Allergen-Free'] });
+  const [photo, setPhoto] = useState(null);
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState('');
+  const [notice, setNotice] = useState('');
+  const [photoPreview, setPhotoPreview] = useState('');
+
+  useEffect(() => {
+    if (!profile) return;
+    setForm({ contactNumber: profile.contactNumber || '', defaultClosingTime: profile.defaultClosingTime || '20:30', pickupInstructions: profile.pickupInstructions || '', defaultAllergens: profile.defaultAllergens?.length ? profile.defaultAllergens : ['None / Allergen-Free'] });
+  }, [profile]);
+  useEffect(() => {
+    if (!photo) { setPhotoPreview(''); return undefined; }
+    const url = URL.createObjectURL(photo); setPhotoPreview(url);
+    return () => URL.revokeObjectURL(url);
+  }, [photo]);
+
+  function toggleDefaultAllergen(tag) {
+    setForm(current => {
+      if (tag === 'None / Allergen-Free') return { ...current, defaultAllergens: ['None / Allergen-Free'] };
+      const selected = current.defaultAllergens.filter(value => value !== 'None / Allergen-Free');
+      return { ...current, defaultAllergens: selected.includes(tag) ? selected.filter(value => value !== tag) : [...selected, tag] };
+    });
+  }
+
+  async function save(event) {
+    event.preventDefault(); setSaving(true); setError(''); setNotice('');
+    const body = new FormData();
+    body.append('contactNumber', form.contactNumber);
+    body.append('defaultClosingTime', form.defaultClosingTime);
+    body.append('pickupInstructions', form.pickupInstructions);
+    body.append('defaultAllergens', JSON.stringify(form.defaultAllergens));
+    if (photo) body.append('storefrontPhoto', photo);
+    try {
+      const { data } = await api.patch('/merchants/profile', body, { headers: { 'Content-Type': 'multipart/form-data' } });
+      onSaved(data?.data?.profile);
+      setPhoto(null);
+      setNotice('Store profile saved. New batch forms will use these defaults.');
+    } catch (err) { setError(err.response?.data?.message || 'Store profile could not be saved.'); }
+    finally { setSaving(false); }
+  }
+
+  const verified = profile?.verificationStatus === 'verified';
+  const verifyingOffice = profile?.verifiedBy?.municipality === 'ALL' ? 'Iloilo Province LGU' : profile?.verifiedBy?.municipality || profile?.verifiedBy?.name || 'Iloilo LGU';
+  return <section className="panel merchant-profile-panel" aria-labelledby="merchant-profile-title">
+    <div className="merchant-profile-heading"><div><p className="eyebrow">Store settings</p><h2 id="merchant-profile-title">Store Profile</h2><p className="panel-subtitle">Keep your pickup details current. Buyers see the contact and handoff instructions on their pass.</p></div><span className={`merchant-profile-status ${verified ? 'verified' : 'pending'}`}>{verified ? `Verified by ${verifyingOffice}` : 'Pending LGU review'}</span></div>
+    <div className="merchant-profile-identity">
+      <div className="merchant-profile-photo">{(photoPreview || profile?.storefrontPhotoUrl) ? <img src={photoPreview || profile.storefrontPhotoUrl} alt={`${profile?.storeName || 'Store'} storefront`} onError={event => { event.currentTarget.hidden = true; }} /> : <span>{(profile?.storeName || 'S').charAt(0).toUpperCase()}</span>}</div>
+      <div className="merchant-profile-facts"><h3>{profile?.storeName || 'Your store'}</h3><p>{({ bakery: 'Bakery', eatery: 'Carinderia / Eatery', grocery: 'Minimart / Grocery', other: 'Other food partner' })[profile?.category] || 'Food partner'}</p><p>{[profile?.barangay, profile?.municipality, 'Iloilo'].filter(Boolean).join(', ')}</p>{profile?.address && <p>{profile.address}</p>}{profile?.verificationDocUrl && <a href={profile.verificationDocUrl} target="_blank" rel="noreferrer">View uploaded business permit ↗</a>}</div>
+    </div>
+    <form className="form-stack merchant-profile-form" onSubmit={save}>
+      <label className="field-label">Storefront photo<input className="field-input" type="file" accept="image/jpeg,image/png,image/webp" onChange={event => setPhoto(event.target.files?.[0] || null)} /><span className="form-note">JPG, PNG or WebP · up to 5 MB</span></label>
+      <div className="field-row"><label className="field-label">Store contact number<input className="field-input" type="tel" maxLength="24" value={form.contactNumber} onChange={event => setForm(current => ({ ...current, contactNumber: event.target.value }))} placeholder="09XX XXX XXXX" /></label><label className="field-label">Typical closing time<input className="field-input" type="time" required value={form.defaultClosingTime} onChange={event => setForm(current => ({ ...current, defaultClosingTime: event.target.value }))} /></label></div>
+      <label className="field-label">Pickup counter instructions<textarea className="field-input" rows="3" maxLength="240" value={form.pickupInstructions} onChange={event => setForm(current => ({ ...current, pickupInstructions: event.target.value }))} placeholder="e.g. Ask for the SalbarKain counter near the bread display" /></label>
+      <fieldset className="allergen-picker"><legend>Default batch allergen notices</legend><div>{['None / Allergen-Free', 'Shrimp / Seafood', 'Peanuts / Tree Nuts', 'Dairy', 'Eggs', 'Gluten / Wheat', 'Pork (Non-Halal)'].map(tag => <button key={tag} type="button" aria-pressed={form.defaultAllergens.includes(tag)} className={`allergen-choice ${form.defaultAllergens.includes(tag) ? 'selected' : ''}`} onClick={() => toggleDefaultAllergen(tag)}>{tag}</button>)}</div><p className="form-note">These tags are preselected when you post a new batch.</p></fieldset>
+      {error && <p className="form-error" role="alert">{error}</p>}{notice && <p className="verified-badge" role="status">{notice}</p>}
+      <button className="primary-button" disabled={saving}>{saving ? 'Saving profile…' : 'Save store settings'}</button>
+    </form>
+    <div className="merchant-profile-recognition"><div><strong>Zero-Waste Partner</strong><span>{completedRescues}/50 rescues · {completedRescues >= 50 ? 'Certificate unlocked' : `${Math.max(0, 50 - completedRescues)} to go`}</span></div><div className="merchant-progress" role="progressbar" aria-label="Zero-Waste Partner milestone progress" aria-valuemin="0" aria-valuemax="50" aria-valuenow={Math.min(50, completedRescues)}><span style={{ width: `${Math.min(100, completedRescues / 50 * 100)}%` }} /></div>{completedRescues >= 50 && <button type="button" className="secondary-button" onClick={() => downloadCertificate(profile?.storeName, completedRescues)}>Download Zero-Waste Storefront Certificate (PDF)</button>}</div>
+  </section>;
+}
+
 export default function MerchantDashboard({ session, onBrowse, onNotice }) {
   const [batches, setBatches] = useState([]);
   const [restockBatch, setRestockBatch] = useState(null);
@@ -105,6 +168,12 @@ export default function MerchantDashboard({ session, onBrowse, onNotice }) {
   const [queueLoading, setQueueLoading] = useState(true);
   const [busyClaim, setBusyClaim] = useState('');
   const [now, setNow] = useState(Date.now());
+  const [profile, setProfile] = useState(null);
+  const [profileError, setProfileError] = useState('');
+  const [dashboardTab, setDashboardTab] = useState('operations');
+  const [reviewsData, setReviewsData] = useState({ averageRating: 0, totalReviews: 0, reviews: [] });
+  const [reviewsLoading, setReviewsLoading] = useState(false);
+  const [reviewsError, setReviewsError] = useState('');
   const isVerified = session.verificationStatus === 'verified' || session.verified === true;
 
   const reloadBatches = useCallback(async () => {
@@ -149,13 +218,29 @@ export default function MerchantDashboard({ session, onBrowse, onNotice }) {
     }
   }, [isVerified]);
 
+  const reloadReviews = useCallback(async () => {
+    setReviewsLoading(true);
+    try {
+      const { data } = await api.get('/merchants/reviews');
+      setReviewsData({ averageRating: Number(data?.data?.averageRating) || 0, totalReviews: Number(data?.data?.totalReviews) || 0, reviews: Array.isArray(data?.data?.reviews) ? data.data.reviews : [] });
+      setReviewsError('');
+    } catch (err) { setReviewsError(err.response?.data?.message || 'Customer reviews could not load.'); }
+    finally { setReviewsLoading(false); }
+  }, []);
+
   useEffect(() => { void reloadBatches(); }, [reloadBatches]);
+  useEffect(() => {
+    let alive = true;
+    api.get('/merchants/profile').then(({ data }) => { if (alive) { setProfile(data?.data?.profile || null); setProfileError(''); } }).catch(err => { if (alive) setProfileError(err.response?.data?.message || 'Store profile could not load.'); });
+    return () => { alive = false; };
+  }, []);
   useEffect(() => {
     void reloadQueue();
     const timer = window.setInterval(() => void reloadQueue(), 20_000);
     return () => window.clearInterval(timer);
   }, [reloadQueue]);
   useEffect(() => { void reloadImpact(); }, [reloadImpact]);
+  useEffect(() => { if (dashboardTab === 'reviews') void reloadReviews(); }, [dashboardTab, reloadReviews]);
   useEffect(() => {
     const timer = window.setInterval(() => setNow(Date.now()), 1000);
     return () => window.clearInterval(timer);
@@ -208,6 +293,21 @@ export default function MerchantDashboard({ session, onBrowse, onNotice }) {
       <button className="secondary-button" onClick={onBrowse}>View marketplace</button>
     </header>
 
+    <div className="merchant-dashboard-tabs" role="tablist" aria-label="Merchant workspace sections">
+      <button type="button" role="tab" aria-selected={dashboardTab === 'operations'} className={dashboardTab === 'operations' ? 'active' : ''} onClick={() => setDashboardTab('operations')}>Operations</button>
+      <button type="button" role="tab" aria-selected={dashboardTab === 'reviews'} className={dashboardTab === 'reviews' ? 'active' : ''} onClick={() => setDashboardTab('reviews')}>Customer reviews</button>
+      <button type="button" role="tab" aria-selected={dashboardTab === 'profile'} className={dashboardTab === 'profile' ? 'active' : ''} onClick={() => setDashboardTab('profile')}>Store profile</button>
+    </div>
+
+    {dashboardTab === 'profile' ? <>
+      {profileError && <div className="alert-banner" role="alert">{profileError} <button type="button" className="text-button" onClick={() => api.get('/merchants/profile').then(({ data }) => { setProfile(data?.data?.profile || null); setProfileError(''); }).catch(err => setProfileError(err.response?.data?.message || 'Store profile could not load.'))}>Try again</button></div>}
+      <StoreProfilePanel profile={profile} onSaved={setProfile} completedRescues={completedRescues} />
+    </> : dashboardTab === 'reviews' ? <section className="panel merchant-customer-reviews" aria-labelledby="merchant-reviews-title">
+      <div className="merchant-queue-heading"><div><p className="eyebrow">Verified pickups only</p><h2 id="merchant-reviews-title">Customer reviews</h2><p className="panel-subtitle">Feedback from buyers whose pickup was confirmed at your counter.</p></div><button type="button" className="secondary-button compact" onClick={() => void reloadReviews()}>Refresh</button></div>
+      <div className="merchant-reviews-summary"><strong>★ {reviewsData.averageRating.toFixed(1)}</strong><span>average from {reviewsData.totalReviews} {reviewsData.totalReviews === 1 ? 'review' : 'reviews'}</span></div>
+      {reviewsLoading ? <p className="panel-subtitle">Loading customer feedback…</p> : reviewsError ? <div className="merchant-inline-error" role="alert">{reviewsError}<button className="text-button" onClick={() => void reloadReviews()}>Try again</button></div> : reviewsData.reviews.length === 0 ? <div className="merchant-queue-empty"><strong>No reviews yet</strong><span>After a verified pickup, buyers can rate their food and counter experience.</span></div> : <div className="merchant-review-list">{reviewsData.reviews.map(review => <article className="merchant-review-card" key={review.id}><div className="merchant-review-topline"><strong>{review.buyerFirstName}</strong><span className="merchant-review-stars" aria-label={`${review.rating} out of 5 stars`}>{'★'.repeat(review.rating)}{'☆'.repeat(5 - review.rating)}</span></div><div className="merchant-review-meta">{review.itemName} · {new Date(review.reviewedAt).toLocaleDateString('en-PH', { year: 'numeric', month: 'short', day: 'numeric' })}</div><p className="merchant-review-comment">{review.reviewComment || 'Rating submitted without a written comment.'}</p></article>)}</div>}
+    </section> : <>
+
     {!isVerified && <div className="alert-banner verification-banner"><strong>Verification {session.verificationStatus === 'rejected' ? 'needs attention' : 'pending'}.</strong> Your listing and pickup tools unlock after the review team approves your account.</div>}
     {!isVerified && <VerificationUploadPanel />}
 
@@ -237,16 +337,17 @@ export default function MerchantDashboard({ session, onBrowse, onNotice }) {
     </section>
 
     <section className="merchant-work-grid" aria-label="Manage surplus">
-      <div id="merchant-batch-form"><MerchantBatchForm onCreated={createBatch} onNotice={onNotice} disabled={!isVerified} restockBatch={restockBatch} previewUrl={previewUrl} /></div>
+      <div id="merchant-batch-form"><MerchantBatchForm onCreated={createBatch} onNotice={onNotice} disabled={!isVerified} restockBatch={restockBatch} previewUrl={previewUrl} storeProfile={profile} /></div>
       <section className="panel merchant-inventory-panel">
         <div className="merchant-inventory-heading"><div><h2>Your listed batches</h2><p className="panel-subtitle">Review what is live and repost a previous batch when it returns.</p></div><div className="merchant-inventory-filters" role="group" aria-label="Filter listed batches"><button type="button" className={inventoryView === 'active' ? 'active' : ''} aria-pressed={inventoryView === 'active'} onClick={() => setInventoryView('active')}>Active <span>{activeBatches.length}</span></button><button type="button" className={inventoryView === 'expired' ? 'active' : ''} aria-pressed={inventoryView === 'expired'} onClick={() => setInventoryView('expired')}>Expired / archive <span>{expiredBatches.length}</span></button></div></div>
         {loadingBatches ? <InventorySkeletons /> : batchError ? <div className="merchant-inline-error" role="alert">{batchError}<button type="button" className="text-button" onClick={() => void reloadBatches()}>Try again</button></div> : listedBatches.length === 0 ? <div className="merchant-queue-empty"><strong>{inventoryView === 'active' ? 'No live batches right now' : 'No expired batches to archive'}</strong><span>{inventoryView === 'active' ? 'Post tonight’s surplus and it will appear in the public marketplace.' : 'Past batches will collect here so they do not crowd your live inventory.'}</span></div> : <div className="inventory-list merchant-inventory-list">{listedBatches.map(batch => <article className="inventory-row merchant-inventory-row" key={batch._id}>
-          <img src={batch.photoUrl} alt={batch.itemName} loading="lazy" onError={event => { event.currentTarget.onerror = null; event.currentTarget.src = '/demo-images/pandesal.svg'; }} />
+          {typeof batch.photoUrl === 'string' && batch.photoUrl.trim() && <img src={batch.photoUrl} alt={batch.itemName} loading="lazy" onError={event => { event.currentTarget.onerror = null; event.currentTarget.src = '/demo-images/pandesal.svg'; }} />}
           <div><h3>{batch.itemName}</h3><p>{batch.remainingQty} of {batch.quantity} portions · {batch.isDonationOnly ? 'Free NGO donation' : formatMoney(batch.price)} · until {formatCutoff(batch.expiresAt)}</p></div>
           <span className={`status-tag ${batch.status}`}>{batch.status === 'expired' || new Date(batch.expiresAt).getTime() <= now ? 'Expired' : batch.status === 'sold_out' ? 'Sold out' : 'Active'}</span>
           {inventoryView === 'expired' && <button type="button" className="secondary-button compact" disabled={!isVerified} onClick={() => chooseRestock(batch)}>Repost</button>}
         </article>)}</div>}
       </section>
     </section>
+    </>}
   </main>;
 }

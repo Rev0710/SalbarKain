@@ -21,6 +21,11 @@ export default function QrPassModal({ pass, onClose, onStatusChange }) {
   const [cancelBusy, setCancelBusy] = useState(false);
   const [cancelError, setCancelError] = useState('');
   const [copiedCode, setCopiedCode] = useState(false);
+  const [rating, setRating] = useState(0);
+  const [reviewComment, setReviewComment] = useState('');
+  const [reviewBusy, setReviewBusy] = useState(false);
+  const [reviewError, setReviewError] = useState('');
+  const [reviewSubmitted, setReviewSubmitted] = useState(false);
   const handledTerminal = useRef(false);
   const onStatusChangeRef = useRef(onStatusChange);
   onStatusChangeRef.current = onStatusChange;
@@ -125,6 +130,19 @@ export default function QrPassModal({ pass, onClose, onStatusChange }) {
     } finally { setCancelBusy(false); }
   }
 
+  async function submitReview(event) {
+    event.preventDefault();
+    if (!rating || reviewBusy) return;
+    setReviewBusy(true); setReviewError('');
+    try {
+      await api.post(`/claims/${encodeURIComponent(pass.qrToken)}/review`, { rating, reviewComment });
+      setReviewSubmitted(true);
+      window.setTimeout(() => onClose({ status: 'completed', reviewed: true }), 1100);
+    } catch (error) {
+      setReviewError(error.response?.data?.message || 'Your rating could not be saved. Please try again.');
+    } finally { setReviewBusy(false); }
+  }
+
   const isCompleted = claimStatus === 'completed';
   const terminalTitle = isCompleted ? 'Pickup verified & rescued!' : claimStatus === 'expired' ? 'Pickup pass expired' : claimStatus === 'recalled' ? 'Pickup pass recalled' : 'Reservation cancelled';
   const terminalCopy = isCompleted
@@ -140,8 +158,18 @@ export default function QrPassModal({ pass, onClose, onStatusChange }) {
         <p className="eyebrow">{isCompleted ? 'Community rescue complete' : 'Pickup pass update'}</p>
         <h2 id="pass-title" className="pass-result-title">{terminalTitle}</h2>
         <p className="pass-result-copy">{terminalCopy}</p>
-        {isCompleted && <div className="pass-impact pass-impact-complete"><strong>{celebrationRank || impact?.tier || 'Rookie Food Saver'}</strong><span>{Number(impact?.rescues || 0)} completed rescues · {Number(impact?.foodKg || 0).toFixed(1)} kg food saved</span></div>}
-        <button type="button" className="primary-button mt-5 w-full" onClick={() => onClose({ status: claimStatus, completed: isCompleted })}>Done</button>
+        {isCompleted && <>
+          <div className="pass-impact pass-impact-complete"><strong>{celebrationRank || impact?.tier || 'Rookie Food Saver'}</strong><span>{Number(impact?.rescues || 0)} completed rescues · {Number(impact?.foodKg || 0).toFixed(1)} kg food saved</span></div>
+          {reviewSubmitted ? <p className="review-thank-you" role="status">Thank you for rating! Your feedback helps the Iloilo food rescue community.</p> : <form className="pass-rating-form" onSubmit={submitReview}>
+            <div><p className="pass-rating-prompt">How was the food and pickup?</p><div className="pass-rating-stars" role="group" aria-label="Rate this verified pickup">
+              {[1, 2, 3, 4, 5].map(value => <button key={value} type="button" aria-label={`${value} star${value === 1 ? '' : 's'}`} aria-pressed={value <= rating} onClick={() => setRating(value)}>★</button>)}
+            </div><p className="pass-rating-sentiment" aria-live="polite">{rating ? ['', 'Needs work', 'Fair', 'Good', 'Very good', 'Fresh & Great!'][rating] : 'Tap a star to rate'}</p></div>
+            <label className="sr-only" htmlFor="pickup-review-comment">Optional review comment</label><textarea id="pickup-review-comment" maxLength={240} rows={3} value={reviewComment} onChange={event => setReviewComment(event.target.value)} placeholder="How was the food quality & counter pickup? (Optional)" />
+            {reviewError && <p className="review-error" role="alert">{reviewError}</p>}
+            <div className="pass-rating-actions"><button className="pass-rating-submit" type="submit" disabled={!rating || reviewBusy}>{reviewBusy ? 'Submitting…' : 'Submit Rating'}</button><button className="pass-rating-skip" type="button" onClick={() => onClose({ status: claimStatus, completed: true })}>Skip / Done</button></div>
+          </form>}
+        </>}
+        {!isCompleted && <button type="button" className="primary-button mt-5 w-full" onClick={() => onClose({ status: claimStatus })}>Done</button>}
       </> : <>
         <button className="close-button" onClick={() => onClose()} aria-label="Close">×</button>
         <p className="eyebrow">Your digital pickup pass</p>
@@ -151,6 +179,8 @@ export default function QrPassModal({ pass, onClose, onStatusChange }) {
         <div className="pickup-code-block"><span>Pickup code</span><div><code>{displayToken}</code><button type="button" className="secondary-button compact" onClick={copyPickupCode}>{copiedCode ? 'Copied' : 'Copy code'}</button></div></div>
         <p className="text-sm font-semibold">{itemName} · {storeName}</p>
         {(pass.storeAddress || batch.merchantId?.address) && <p className="mt-1 text-xs text-muted">{pass.storeAddress || batch.merchantId.address}</p>}
+        {(pass.storeContactNumber || batch.merchantId?.contactNumber) && <p className="mt-1 text-xs text-muted">Store contact: <a href={`tel:${pass.storeContactNumber || batch.merchantId.contactNumber}`}>{pass.storeContactNumber || batch.merchantId.contactNumber}</a></p>}
+        {(pass.pickupInstructions || batch.merchantId?.pickupInstructions) && <p className="pickup-instructions-note">Pickup instructions: {pass.pickupInstructions || batch.merchantId.pickupInstructions}</p>}
         <p className="mt-1 text-xs text-muted">{totalPrice > 0 ? `Pay ₱${totalPrice.toFixed(2)} by cash or GCash at the store counter. ` : 'Free pickup. '}Pickup before the timer ends.</p>
         {impact && <div className="pass-impact"><strong>{impact.tier || 'New Food Saver'}</strong><span>{Number(impact.rescues || 0)} completed rescues · ₱{Number(impact.moneySaved || 0).toFixed(2)} saved · {Number(impact.co2eKg || 0).toFixed(2)} kg CO₂e diverted</span></div>}
         <p className="offline-pass-note">Saved on this device and available offline.</p>

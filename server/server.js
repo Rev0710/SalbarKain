@@ -13,6 +13,7 @@ const claimRoutes = require('./routes/claimRoutes');
 const statsRoutes = require('./routes/statsRoutes');
 const adminRoutes = require('./routes/adminRoutes');
 const impactRoutes = require('./routes/impactRoutes');
+const merchantRoutes = require('./routes/merchantRoutes');
 const errorHandler = require('./middleware/errorHandler');
 const securityAudit = require('./middleware/securityAudit');
 const notFound = require('./middleware/notFound');
@@ -62,6 +63,7 @@ app.use('/api/claims', claimRoutes);
 app.use('/api/stats', statsRoutes);
 app.use('/api/admin', adminRoutes);
 app.use('/api/impact', impactRoutes);
+app.use('/api/merchants', merchantRoutes);
 app.use(notFound);
 app.use(errorHandler);
 
