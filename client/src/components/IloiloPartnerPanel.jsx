@@ -62,7 +62,7 @@ function formatTime(value) {
   return Number.isNaN(date.getTime()) ? '' : date.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' });
 }
 
-export default function IloiloPartnerPanel({ partners, fallbackBatches, loading, error, selectedMunicipality, onMunicipalityChange }) {
+export default function IloiloPartnerPanel({ partners, fallbackBatches, loading, error, selectedMunicipality, onMunicipalityChange, userCoords, distanceKmFromGeoJson, formatDistance }) {
   const directory = useMemo(() => {
     const listed = Array.isArray(partners) ? partners : [];
     const fallback = fromBatches(Array.isArray(fallbackBatches) ? fallbackBatches : []);
@@ -70,7 +70,12 @@ export default function IloiloPartnerPanel({ partners, fallbackBatches, loading,
     for (const store of fallback) if (!merged.has(String(store._id))) merged.set(String(store._id), store);
     return [...merged.values()];
   }, [partners, fallbackBatches]);
-  const filtered = useMemo(() => directory.filter((store) => selectedMunicipality === 'All Iloilo' || canonicalMunicipality(store.municipality) === selectedMunicipality), [directory, selectedMunicipality]);
+  const filtered = useMemo(() => {
+    const matching = directory.filter((store) => selectedMunicipality === 'All Iloilo' || canonicalMunicipality(store.municipality) === selectedMunicipality);
+    if (!userCoords) return matching;
+    return matching.map(store => ({ ...store, distanceKm: distanceKmFromGeoJson(userCoords, store.location) }))
+      .sort((a, b) => (a.distanceKm ?? Infinity) - (b.distanceKm ?? Infinity));
+  }, [directory, selectedMunicipality, userCoords, distanceKmFromGeoJson]);
   const activeBatchesIn = municipality => directory.reduce((total, store) => total + (municipality === 'All Iloilo' || canonicalMunicipality(store.municipality) === municipality ? Math.max(0, Number(store.activeBatchCount) || 0) : 0), 0);
   return <aside className="partner-hub-shell" aria-label="Iloilo surplus hubs and pickup radar">
     <div className="partner-hub-header">
@@ -95,7 +100,7 @@ export default function IloiloPartnerPanel({ partners, fallbackBatches, loading,
           </div>
           <div className="partner-store-main">
             <div className="partner-store-name-line"><h3 title={store.storeName}>{store.storeName || 'Verified food partner'}</h3><span className="partner-verified" title="KYB verified">✓ Verified</span></div>
-            <p className="partner-store-location">{partnerLocation(store)}</p>
+            <p className="partner-store-location">{partnerLocation(store)}{Number.isFinite(store.distanceKm) && <span className="partner-distance"> · {formatDistance(store.distanceKm)}</span>}</p>
             <p className={`partner-store-status ${urgent ? 'urgent' : activeBatchCount ? 'available' : 'upcoming'}`}>
               {activeBatchCount > 0 ? `${activePacks} ${activePacks === 1 ? 'pack' : 'packs'} active · Closes ${formatTime(store.closesAt) || 'soon'}` : 'Next drop window · 7:00–9:00 PM'}
             </p>
