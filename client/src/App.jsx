@@ -123,12 +123,14 @@ function AppShell() {
     setMarketRefresh(value => value + 1);
     if (result.status === 'completed') setNotice('Pickup verified. Your rescue is now part of the Iloilo community tally.');
   }
-  async function submitClaim({ buyerName, phone, qty, safetyAcknowledged }) {
+  async function submitClaim({ buyerName, phone, qty, quantity, safetyAcknowledged }) {
     try {
-      const { data } = await api.post('/claims', { batchId: claimBatch._id || claimBatch.id, qty, buyerName, phone, deviceToken: getDeviceToken(), safetyAcknowledged });
+      const requestedQty = Number(quantity ?? qty ?? 1);
+      const { data } = await api.post('/claims', { batchId: claimBatch._id || claimBatch.id, quantity: requestedQty, buyerName, phone, deviceToken: getDeviceToken(), safetyAcknowledged });
       const claim = data.data.claim;
       const coordinates = claimBatch.merchantId?.location?.coordinates || null;
-      const pass = { id: claim.id, qrToken: claim.qrToken, batchId: claim.batchId, qty: claim.qty, quantity: claim.qty, priceAtClaim: claim.priceAtClaim, totalPrice: Number((Number(claim.priceAtClaim || 0) * Number(claim.qty || 1)).toFixed(2)), pickupDeadline: claim.pickupDeadline, status: claim.status, itemName: claimBatch.itemName, storeName: claimBatch.merchantId?.storeName || 'Local food partner', storeAddress: claimBatch.merchantId?.address || '', storeContactNumber: claimBatch.merchantId?.contactNumber || '', pickupInstructions: claimBatch.merchantId?.pickupInstructions || '', coordinates, batch: claimBatch };
+      const claimQuantity = Number(claim.quantity || claim.qty || requestedQty);
+      const pass = { id: claim.id, qrToken: claim.qrToken, batchId: claim.batchId, qty: claimQuantity, quantity: claimQuantity, priceAtClaim: claim.priceAtClaim, totalPrice: Number(claim.totalPrice ?? (Number(claim.priceAtClaim || 0) * claimQuantity)), pickupDeadline: claim.pickupDeadline, status: claim.status, itemName: claimBatch.itemName, storeName: claimBatch.merchantId?.storeName || 'Local food partner', storeAddress: claimBatch.merchantId?.address || '', storeContactNumber: claimBatch.merchantId?.contactNumber || '', pickupInstructions: claimBatch.merchantId?.pickupInstructions || '', storeLogoUrl: claimBatch.merchantId?.storefrontPhotoUrl || '', coordinates, batch: claimBatch };
       savePass(pass); setClaimBatch(null); setPickupPass(pass); setMarketRefresh(value => value + 1);
     } catch (error) {
       if (['BATCH_UNAVAILABLE', 'PICKUP_PASS_EXPIRED', 'BATCH_EXPIRED'].includes(error.response?.data?.code)) {
@@ -190,7 +192,7 @@ function AppShell() {
     {loginOpen && <AuthModal onClose={() => setLoginOpen(false)} onLogin={handleLogin} />}
     {logoutConfirmOpen && <div className="overlay logout-confirm-overlay" role="presentation" onMouseDown={event => event.target === event.currentTarget && setLogoutConfirmOpen(false)}><section className="dialog logout-confirm-dialog" role="alertdialog" aria-modal="true" aria-labelledby="logout-confirm-title" aria-describedby="logout-confirm-copy"><p className="eyebrow">Account session</p><h2 id="logout-confirm-title">Sign out of SalbarKain?</h2><p id="logout-confirm-copy">You can sign back in anytime to manage your store and pickup queue.</p><div className="logout-confirm-actions"><button type="button" className="secondary-button" onClick={() => setLogoutConfirmOpen(false)}>Stay signed in</button><button type="button" className="primary-button" onClick={logout}>Sign out</button></div></section></div>}
     {impactOpen && <MyImpactModal session={session} onClose={() => setImpactOpen(false)} />}
-    {claimBatch && <ClaimDrawer batch={claimBatch} onClose={() => setClaimBatch(null)} onSubmit={submitClaim} />}
+    {claimBatch && <ClaimDrawer batch={claimBatch} verifiedNgo={session?.role === 'ngo' && (session?.verificationStatus === 'verified' || session?.verified === true)} onClose={() => setClaimBatch(null)} onSubmit={submitClaim} />}
     {pickupPass && <QrPassModal pass={pickupPass} onStatusChange={handlePickupStatusChange} onClose={(result) => { setPickupPass(null); if (result?.cancelled) { localStorage.removeItem(PICKUP_PASS_KEY); localStorage.removeItem(LEGACY_PICKUP_PASS_KEY); setSavedPass(null); setMarketRefresh(value => value + 1); setNotice('Pickup cancelled. The portions are back in the marketplace.'); } else if (result?.status) { localStorage.removeItem(PICKUP_PASS_KEY); localStorage.removeItem(LEGACY_PICKUP_PASS_KEY); setSavedPass(null); } }} />}
     {notice && <div className="toast" role="status">{notice}<button onClick={() => setNotice('')} aria-label="Dismiss">×</button></div>}
   </div>;

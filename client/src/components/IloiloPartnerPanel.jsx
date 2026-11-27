@@ -33,7 +33,7 @@ function fromBatches(batches) {
       barangay: merchant.barangay || '',
       municipality: merchant.municipality || '',
       location: merchant.location,
-      storefrontPhotoUrl: merchant.storefrontPhotoUrl || batch.photoUrl || '',
+      storefrontPhotoUrl: merchant.storefrontPhotoUrl || '',
       verificationStatus: 'verified',
       activeBatchCount: 0,
       activePackCount: 0,
@@ -94,12 +94,8 @@ export default function IloiloPartnerPanel({ partners, fallbackBatches, loading,
         const closesAt = store.closesAt ? new Date(store.closesAt) : null;
         const urgent = activeBatchCount > 0 && closesAt && closesAt.getTime() - Date.now() <= 45 * 60 * 1000;
         return <article className="partner-store-row" key={store._id}>
-          <div className="partner-store-visual">
-            {store.storefrontPhotoUrl && <img className="partner-store-photo" src={store.storefrontPhotoUrl} alt="" loading="lazy" onError={(event) => { event.currentTarget.hidden = true; event.currentTarget.nextElementSibling.hidden = false; }} />}
-            <div className="partner-store-mark" aria-hidden="true" hidden={Boolean(store.storefrontPhotoUrl)}>{(store.storeName || 'S').trim().charAt(0).toUpperCase()}</div>
-          </div>
           <div className="partner-store-main">
-            <div className="partner-store-name-line"><h3 title={store.storeName}>{store.storeName || 'Verified food partner'}</h3><span className="partner-verified" title="KYB verified">✓ Verified</span></div>
+            <div className="partner-store-name-line">{store.storefrontPhotoUrl && <img className="partner-store-avatar" src={store.storefrontPhotoUrl} alt="" loading="lazy" onError={(event) => { event.currentTarget.hidden = true; event.currentTarget.nextElementSibling.hidden = false; }} />}<span className="partner-store-avatar partner-store-avatar-fallback" aria-hidden="true" hidden={Boolean(store.storefrontPhotoUrl)}>{(store.storeName || 'S').trim().charAt(0).toUpperCase()}</span><h3 title={store.storeName}>{store.storeName || 'Verified food partner'}</h3><span className="partner-verified" title="KYB verified">✓ Verified</span></div>
             <p className="partner-store-location">{partnerLocation(store)}{Number.isFinite(store.distanceKm) && <span className="partner-distance"> · {formatDistance(store.distanceKm)}</span>}</p>
             <p className={`partner-store-status ${urgent ? 'urgent' : activeBatchCount ? 'available' : 'upcoming'}`}>
               {activeBatchCount > 0 ? `${activePacks} ${activePacks === 1 ? 'pack' : 'packs'} active · Closes ${formatTime(store.closesAt) || 'soon'}` : 'Next drop window · 7:00–9:00 PM'}

@@ -20,7 +20,7 @@ async function expireClaimAndRestore(claimId, now = new Date(), { force = false 
         [
           {
             $set: {
-              remainingQty: { $min: [{ $add: ['$remainingQty', claim.qty] }, '$quantity'] },
+              remainingQty: { $min: [{ $add: ['$remainingQty', claim.quantity || claim.qty] }, '$quantity'] },
             },
           },
           {

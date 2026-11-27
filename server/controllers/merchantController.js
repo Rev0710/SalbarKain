@@ -8,6 +8,12 @@ const { batchCache, invalidateBatchCache } = require('../utils/cache');
 
 const ALLERGENS = ['None / Allergen-Free', 'Shrimp / Seafood', 'Peanuts / Tree Nuts', 'Dairy', 'Eggs', 'Gluten / Wheat', 'Pork (Non-Halal)'];
 
+function cleanProfilePart(value) {
+  return typeof value === 'string'
+    ? value.replace(/\bunspecified\b/gi, '').replace(/[\s,·-]+/g, ' ').trim()
+    : '';
+}
+
 function uploadStorefront(buffer) {
   return new Promise((resolve, reject) => cloudinary.uploader.upload_stream(
     { folder: 'salbar-kain/storefronts', resource_type: 'image', allowed_formats: ['jpg', 'jpeg', 'png', 'webp'] },
@@ -24,8 +30,8 @@ function uploadStorefront(buffer) {
 function profileFields(user) {
   return {
     id: user._id.toString(), role: user.role, name: user.name, email: user.email,
-    storeName: user.storeName, category: user.category, address: user.address,
-    barangay: user.barangay, municipality: user.municipality,
+    storeName: user.storeName, category: user.category, address: cleanProfilePart(user.address),
+    barangay: cleanProfilePart(user.barangay), municipality: cleanProfilePart(user.municipality) || 'Iloilo Province',
     location: user.location, storefrontPhotoUrl: user.storefrontPhotoUrl || '',
     contactNumber: user.contactNumber || user.phone || '',
     defaultClosingTime: user.defaultClosingTime || '20:30',

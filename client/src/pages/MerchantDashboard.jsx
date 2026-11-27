@@ -91,7 +91,7 @@ function downloadCertificate(storeName, completedRescues) {
   pdf.save('salbarkain-zero-waste-partner.pdf');
 }
 
-function StoreProfilePanel({ profile, onSaved, completedRescues }) {
+function StoreProfilePanel({ profile, onSaved, completedRescues, onLogoPreviewChange }) {
   const [form, setForm] = useState({ contactNumber: '', defaultClosingTime: '20:30', pickupInstructions: '', defaultAllergens: ['None / Allergen-Free'] });
   const [photo, setPhoto] = useState(null);
   const [saving, setSaving] = useState(false);
@@ -104,10 +104,10 @@ function StoreProfilePanel({ profile, onSaved, completedRescues }) {
     setForm({ contactNumber: profile.contactNumber || '', defaultClosingTime: profile.defaultClosingTime || '20:30', pickupInstructions: profile.pickupInstructions || '', defaultAllergens: profile.defaultAllergens?.length ? profile.defaultAllergens : ['None / Allergen-Free'] });
   }, [profile]);
   useEffect(() => {
-    if (!photo) { setPhotoPreview(''); return undefined; }
-    const url = URL.createObjectURL(photo); setPhotoPreview(url);
+    if (!photo) { setPhotoPreview(''); onLogoPreviewChange?.(''); return undefined; }
+    const url = URL.createObjectURL(photo); setPhotoPreview(url); onLogoPreviewChange?.(url);
     return () => URL.revokeObjectURL(url);
-  }, [photo]);
+  }, [photo, onLogoPreviewChange]);
 
   function toggleDefaultAllergen(tag) {
     setForm(current => {
@@ -169,6 +169,7 @@ export default function MerchantDashboard({ session, onBrowse, onNotice }) {
   const [busyClaim, setBusyClaim] = useState('');
   const [now, setNow] = useState(Date.now());
   const [profile, setProfile] = useState(null);
+  const [logoPreview, setLogoPreview] = useState('');
   const [profileError, setProfileError] = useState('');
   const [dashboardTab, setDashboardTab] = useState('operations');
   const [reviewsData, setReviewsData] = useState({ averageRating: 0, totalReviews: 0, reviews: [] });
@@ -289,7 +290,7 @@ export default function MerchantDashboard({ session, onBrowse, onNotice }) {
 
   return <main className="dashboard-shell merchant-dashboard">
     <header className="dashboard-heading merchant-heading">
-      <div><p className="eyebrow">Merchant operations</p><h1>{session.storeName || 'Your store'}</h1><p>Today’s rescue activity, pickup counter, and surplus inventory.</p></div>
+      <div className="merchant-heading-identity"><div className="merchant-heading-logo">{(logoPreview || profile?.storefrontPhotoUrl) ? <><img src={logoPreview || profile.storefrontPhotoUrl} alt={profile?.storeName || session.storeName || 'Store'} onError={event => { event.currentTarget.hidden = true; event.currentTarget.nextElementSibling.hidden = false; }} /><span hidden>{(profile?.storeName || session.storeName || 'S').trim().charAt(0).toUpperCase()}</span></> : <span>{(profile?.storeName || session.storeName || 'S').trim().charAt(0).toUpperCase()}</span>}</div><div><p className="eyebrow">Merchant operations</p><h1>{profile?.storeName || session.storeName || 'Your store'}</h1><p>Today’s rescue activity, pickup counter, and surplus inventory.</p></div></div>
       <button className="secondary-button" onClick={onBrowse}>View marketplace</button>
     </header>
 
@@ -301,7 +302,7 @@ export default function MerchantDashboard({ session, onBrowse, onNotice }) {
 
     {dashboardTab === 'profile' ? <>
       {profileError && <div className="alert-banner" role="alert">{profileError} <button type="button" className="text-button" onClick={() => api.get('/merchants/profile').then(({ data }) => { setProfile(data?.data?.profile || null); setProfileError(''); }).catch(err => setProfileError(err.response?.data?.message || 'Store profile could not load.'))}>Try again</button></div>}
-      <StoreProfilePanel profile={profile} onSaved={setProfile} completedRescues={completedRescues} />
+      <StoreProfilePanel profile={profile} onSaved={setProfile} completedRescues={completedRescues} onLogoPreviewChange={setLogoPreview} />
     </> : dashboardTab === 'reviews' ? <section className="panel merchant-customer-reviews" aria-labelledby="merchant-reviews-title">
       <div className="merchant-queue-heading"><div><p className="eyebrow">Verified pickups only</p><h2 id="merchant-reviews-title">Customer reviews</h2><p className="panel-subtitle">Feedback from buyers whose pickup was confirmed at your counter.</p></div><button type="button" className="secondary-button compact" onClick={() => void reloadReviews()}>Refresh</button></div>
       <div className="merchant-reviews-summary"><strong>★ {reviewsData.averageRating.toFixed(1)}</strong><span>average from {reviewsData.totalReviews} {reviewsData.totalReviews === 1 ? 'review' : 'reviews'}</span></div>

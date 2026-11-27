@@ -9,16 +9,15 @@ const normalizePhone = require('../utils/phone');
 const { batchCache, invalidateBatchCache } = require('../utils/cache');
 const { expireClaimAndRestore } = require('../utils/claimExpiry');
 
-function validateClaimBody(body) {
+function validateClaimBody(body, requestedQty) {
   if (!body || typeof body !== 'object' || Array.isArray(body)) {
     throw httpError(400, 'INVALID_REQUEST', 'Provide claim details.');
   }
   if (!mongoose.isValidObjectId(body.batchId)) {
     throw httpError(400, 'INVALID_BATCH_ID', 'Choose a valid food batch.');
   }
-  const qty = Number(body.qty);
-  if (!Number.isInteger(qty) || qty < 1 || qty > 100) {
-    throw httpError(400, 'INVALID_QUANTITY', 'Claim quantity must be a whole number from 1 to 100.');
+  if (!Number.isInteger(requestedQty) || requestedQty < 1 || requestedQty > 10000) {
+    throw httpError(400, 'INVALID_QUANTITY', 'Claim quantity must be a whole number from 1 to 10,000.');
   }
   if (typeof body.buyerName !== 'string' || body.buyerName.trim().length < 2 || body.buyerName.trim().length > 100) {
     throw httpError(400, 'INVALID_NAME', 'Enter a name between 2 and 100 characters.');
@@ -29,7 +28,8 @@ function validateClaimBody(body) {
   if (body.safetyAcknowledged !== true) throw httpError(400, 'SAFETY_ACK_REQUIRED', 'Confirm that you reviewed the storage and allergen information before reserving food.');
   return {
     batchId: new mongoose.Types.ObjectId(body.batchId),
-    qty,
+    qty: requestedQty,
+    quantity: requestedQty,
     buyerName: body.buyerName.trim(),
     deviceToken: body.deviceToken,
     phone: normalizePhone(body.phone),
@@ -58,7 +58,11 @@ async function generateUniquePickupCode() {
 }
 
 async function createClaim(req, res) {
-  const input = validateClaimBody(req.body);
+  const quantityField = req.body?.quantity ?? req.body?.qty;
+  const requestedQty = Math.max(1, Number.parseInt(quantityField, 10) || 1);
+  const verifiedNgoBuyer = req.user?.role === 'ngo' && (req.user.verificationStatus === 'verified' || req.user.verified === true);
+  if (!verifiedNgoBuyer && requestedQty > 5) throw httpError(400, 'QUANTITY_LIMIT_EXCEEDED', 'Everyday buyers can reserve up to 5 packs per pickup.');
+  const input = validateClaimBody(req.body, requestedQty);
   const session = await mongoose.startSession();
   const qrToken = await generateUniquePickupCode();
   const now = new Date();
@@ -88,45 +92,38 @@ async function createClaim(req, res) {
       const batch = await Batch.findOneAndUpdate(
         {
           _id: input.batchId,
-          remainingQty: { $gte: input.qty },
+          remainingQty: { $gte: requestedQty },
           status: 'active',
           expiresAt: { $gt: now },
           $or: [{ safeUntil: { $gt: now } }, { safeUntil: { $exists: false } }],
         },
-        [
-          {
-            $set: {
-              remainingQty: { $subtract: ['$remainingQty', input.qty] },
-              status: {
-                $cond: [
-                  { $eq: [{ $subtract: ['$remainingQty', input.qty] }, 0] },
-                  'sold_out',
-                  'active',
-                ],
-              },
-            },
-          },
-        ],
+        { $inc: { remainingQty: -requestedQty } },
         { session, returnDocument: 'after' },
       );
 
       if (!batch) {
         throw httpError(409, 'BATCH_UNAVAILABLE', 'This batch has expired or does not have enough portions remaining.');
       }
+      if (batch.remainingQty === 0) {
+        await Batch.updateOne({ _id: batch._id, status: 'active', remainingQty: 0 }, { $set: { status: 'sold_out' } }, { session });
+      }
       const flashActive = candidateBatch.isFlashDropEnabled && candidateBatch.expiresAt.getTime() - now.getTime() <= 30 * 60 * 1000;
       const priceAtClaim = verifiedNgo && flashActive ? 0 : flashActive ? Number((Number(candidateBatch.price || 0) * 0.5).toFixed(2)) : Number(candidateBatch.price || 0);
       const unitSavings = candidateBatch.retailValue != null ? Math.max(0, Number(candidateBatch.retailValue) - priceAtClaim) : candidateBatch.originalPrice != null ? Math.max(0, Number(candidateBatch.originalPrice) - priceAtClaim) : 0;
+      const totalPrice = Number((priceAtClaim * requestedQty).toFixed(2));
       const claim = new Claim({
         qrToken,
         batchId: batch._id,
         merchantId: batch.merchantId,
-        qty: input.qty,
+        qty: requestedQty,
+        quantity: requestedQty,
         buyerName: input.buyerName,
         deviceToken: input.deviceToken,
         phone: input.phone,
         safetyAcknowledged: true,
         priceAtClaim,
-        estimatedSavings: Number((unitSavings * input.qty).toFixed(2)),
+        totalPrice,
+        estimatedSavings: Number((unitSavings * requestedQty).toFixed(2)),
         pickupDeadline,
         status: 'pending',
       });
@@ -151,10 +148,12 @@ async function createClaim(req, res) {
         qrToken: createdClaim.qrToken,
         batchId: createdClaim.batchId.toString(),
         qty: createdClaim.qty,
+        quantity: createdClaim.quantity || createdClaim.qty,
         buyerName: createdClaim.buyerName,
         pickupDeadline: createdClaim.pickupDeadline,
         status: createdClaim.status,
         priceAtClaim: createdClaim.priceAtClaim,
+        totalPrice: createdClaim.totalPrice,
       },
     },
   });
@@ -190,7 +189,7 @@ async function cancelClaim(req, res) {
       await Batch.updateOne(
         { _id: claim.batchId },
         [
-          { $set: { remainingQty: { $min: [{ $add: [{ $ifNull: ['$remainingQty', 0] }, claim.qty] }, '$quantity'] } } },
+          { $set: { remainingQty: { $min: [{ $add: [{ $ifNull: ['$remainingQty', 0] }, claim.quantity || claim.qty] }, '$quantity'] } } },
           { $set: { status: {
             $cond: [
               { $or: [{ $lte: ['$expiresAt', now] }, { $lte: [{ $ifNull: ['$safeUntil', '$expiresAt'] }, now] }] },
