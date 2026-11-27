@@ -1,6 +1,6 @@
 const bcrypt = require('bcryptjs');
 const nodemailer = require('nodemailer');
-const { randomInt } = require('crypto');
+const { randomInt, createHash } = require('crypto');
 const User = require('../models/User');
 const httpError = require('../utils/httpError');
 const { signAccessToken, assertJwtConfigured } = require('../utils/jwt');
@@ -178,6 +178,39 @@ async function login(req, res) {
   res.status(200).json({ success: true, data: { user: publicUser(user), token } });
 }
 
+function inviteDigest(token) {
+  if (typeof token !== 'string' || !/^[a-f\d]{64}$/i.test(token.trim())) throw httpError(400, 'INVALID_INVITE', 'This LGU activation link is invalid. Ask the Provincial Super-Admin for a new invite.');
+  return createHash('sha256').update(token.trim()).digest('hex');
+}
+
+async function verifyLguInvite(req, res) {
+  const digest = inviteDigest(req.params.token);
+  const user = await User.findOne({ role: 'admin', inviteTokenHash: digest, inviteExpires: { $gt: new Date() }, verificationStatus: 'pending', assignedMunicipality: { $ne: 'ALL' } }).select('+inviteTokenHash +inviteExpires').lean();
+  if (!user) throw httpError(410, 'INVITE_INVALID_OR_EXPIRED', 'This activation link is expired or has already been used. Ask the Provincial Super-Admin for a new invite.');
+  res.set('Cache-Control', 'no-store').json({ success: true, data: { officerName: user.name, email: user.email, assignedMunicipality: user.assignedMunicipality || user.municipality } });
+}
+
+async function activateLguAdmin(req, res) {
+  const digest = inviteDigest(req.body?.token);
+  const password = req.body?.password;
+  if (typeof password !== 'string' || password.length < 8 || Buffer.byteLength(password, 'utf8') > PASSWORD_MAX_LENGTH) {
+    throw httpError(400, 'INVALID_PASSWORD', `Password must be at least 8 characters and no more than ${PASSWORD_MAX_LENGTH} UTF-8 bytes.`);
+  }
+  assertJwtConfigured();
+  const passwordHash = await bcrypt.hash(password, 12);
+  const user = await User.findOneAndUpdate(
+    { role: 'admin', inviteTokenHash: digest, inviteExpires: { $gt: new Date() }, verificationStatus: 'pending', assignedMunicipality: { $ne: 'ALL' } },
+    { $set: { passwordHash, verificationStatus: 'verified', verified: true }, $unset: { inviteTokenHash: 1, inviteExpires: 1 } },
+    { new: true, runValidators: true },
+  );
+  if (!user) throw httpError(410, 'INVITE_INVALID_OR_EXPIRED', 'This activation link is expired or has already been used. Ask the Provincial Super-Admin for a new invite.');
+  const token = signAccessToken(user);
+  const production = process.env.NODE_ENV === 'production';
+  res.cookie('salbarkain_token', token, { httpOnly: true, secure: production, sameSite: production ? 'none' : 'lax', maxAge: 7 * 24 * 60 * 60 * 1000, path: '/' });
+  await recordAuthEvent(req, 'lgu_admin_activated', { email: user.email, userId: user._id });
+  res.status(200).json({ success: true, data: { user: publicUser(user), token } });
+}
+
 async function requestPasswordCode(req, res) {
   const user = await User.findOne({ _id: req.user.id, role: 'merchant' });
   if (!user) throw httpError(404, 'ACCOUNT_NOT_FOUND', 'Merchant account was not found.');
@@ -241,4 +274,4 @@ async function confirmPasswordChange(req, res) {
   res.status(200).json({ success: true, message: 'Password updated securely.' });
 }
 
-module.exports = { register, login, submitVerificationUpdate, requestPasswordCode, confirmPasswordChange };
+module.exports = { register, login, submitVerificationUpdate, requestPasswordCode, confirmPasswordChange, verifyLguInvite, activateLguAdmin };

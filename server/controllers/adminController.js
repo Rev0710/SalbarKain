@@ -1,4 +1,6 @@
 const bcrypt = require('bcryptjs');
+const crypto = require('crypto');
+const nodemailer = require('nodemailer');
 const cloudinary = require('../config/cloudinary');
 const User = require('../models/User');
 const Batch = require('../models/Batch');
@@ -211,18 +213,68 @@ async function exportMenro(req, res) {
   res.set({ 'Cache-Control': 'no-store', 'Content-Disposition': 'attachment; filename="salbarkain-menro-impact.csv"' }).type('text/csv').send(csv);
 }
 
-async function createOfficer(req, res) {
-  if ((req.user.assignedMunicipality || 'ALL') !== 'ALL') throw httpError(403, 'PROVINCIAL_ADMIN_REQUIRED', 'Only the Iloilo Provincial Super-Admin can create municipal officers.');
-  const { name, email, password, municipality } = req.body || {};
-  if (typeof name !== 'string' || name.trim().length < 2 || name.trim().length > 100) throw httpError(400, 'INVALID_NAME', 'Enter the officer’s full name.');
-  if (typeof email !== 'string' || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email.trim())) throw httpError(400, 'INVALID_EMAIL', 'Enter a valid officer email.');
-  if (typeof password !== 'string' || password.length < 10 || Buffer.byteLength(password, 'utf8') > 72) throw httpError(400, 'INVALID_PASSWORD', 'Officer password must be at least 10 characters.');
-  if (typeof municipality !== 'string' || !MUNICIPALITIES.includes(municipality) || municipality === 'Other Iloilo Municipality') throw httpError(400, 'INVALID_MUNICIPALITY', 'Choose a municipality from the supported Iloilo LGUs.');
+async function inviteLguAdmin(req, res) {
+  if (req.user.assignedMunicipality !== 'ALL') throw httpError(403, 'PROVINCIAL_ADMIN_REQUIRED', 'Only the Iloilo Provincial Super-Admin can invite municipal LGU officers.');
+  const { officerName, email, assignedMunicipality } = req.body || {};
+  if (typeof officerName !== 'string' || officerName.trim().length < 2 || officerName.trim().length > 100) throw httpError(400, 'INVALID_NAME', 'Enter the officer or office name.');
+  if (typeof email !== 'string' || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email.trim())) throw httpError(400, 'INVALID_EMAIL', 'Enter a valid official email address.');
+  if (typeof assignedMunicipality !== 'string' || !MUNICIPALITIES.includes(assignedMunicipality)) throw httpError(400, 'INVALID_MUNICIPALITY', 'Choose an Iloilo municipality or city.');
+
   const emailValue = email.trim().toLowerCase();
-  if (await User.exists({ email: emailValue })) throw httpError(409, 'EMAIL_ALREADY_REGISTERED', 'An account with this email already exists.');
-  const passwordHash = await bcrypt.hash(password, 12);
-  const user = await User.create({ role: 'admin', name: name.trim(), email: emailValue, passwordHash, assignedMunicipality: municipality, municipality, barangay: 'Unspecified', address: `${municipality}, Iloilo`, location: { type: 'Point', coordinates: [122.55, 10.745] }, verified: true, verificationStatus: 'verified' });
-  res.status(201).json({ success: true, data: { officer: { id: user._id.toString(), name: user.name, email: user.email, assignedMunicipality: user.assignedMunicipality } } });
+  let user = await User.findOne({ email: emailValue }).select('+inviteTokenHash +inviteExpires');
+  const isNewOfficer = !user;
+  if (user && (user.role !== 'admin' || user.assignedMunicipality === 'ALL' || user.verificationStatus !== 'pending')) {
+    throw httpError(409, 'EMAIL_ALREADY_REGISTERED', 'This email belongs to an existing account. Use a new official email address.');
+  }
+
+  const inviteToken = crypto.randomBytes(32).toString('hex');
+  const inviteTokenHash = crypto.createHash('sha256').update(inviteToken).digest('hex');
+  const inviteExpires = new Date(Date.now() + 24 * 60 * 60 * 1000);
+  if (!user) {
+    const unusablePasswordHash = await bcrypt.hash(crypto.randomBytes(48).toString('hex'), 12);
+    user = new User({ role: 'admin', name: officerName.trim(), email: emailValue, passwordHash: unusablePasswordHash, assignedMunicipality, municipality: assignedMunicipality, barangay: 'Unspecified', address: `${assignedMunicipality}, Iloilo`, location: { type: 'Point', coordinates: [122.55, 10.745] }, verified: false, verificationStatus: 'pending' });
+  } else {
+    user.name = officerName.trim();
+    user.assignedMunicipality = assignedMunicipality;
+    user.municipality = assignedMunicipality;
+    user.verificationStatus = 'pending';
+    user.verified = false;
+  }
+  user.inviteTokenHash = inviteTokenHash;
+  user.inviteExpires = inviteExpires;
+  await user.save();
+
+  const clientUrl = (process.env.CLIENT_URL || process.env.CLIENT_ORIGINS?.split(',')[0] || 'http://localhost:5173').trim().replace(/\/+$/, '');
+  const inviteUrl = `${clientUrl}/activate-lgu?token=${encodeURIComponent(inviteToken)}`;
+  let emailSent = false;
+  const smtpUser = process.env.SMTP_USER?.trim();
+  const smtpPass = process.env.SMTP_PASS?.trim();
+  if (smtpUser && smtpPass) {
+    try {
+      const transporter = nodemailer.createTransport({ host: process.env.SMTP_HOST || 'smtp.gmail.com', port: Number(process.env.SMTP_PORT) || 587, secure: String(process.env.SMTP_SECURE || '').toLowerCase() === 'true', auth: { user: smtpUser, pass: smtpPass } });
+      const escapeHtml = (value) => String(value).replace(/[&<>"']/g, (char) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[char]);
+      await transporter.sendMail({
+        from: process.env.SMTP_FROM?.trim() || smtpUser,
+        to: emailValue,
+        subject: 'Official SalbarKain Iloilo LGU admin activation invitation',
+        text: `Hello ${officerName.trim()},\n\nThe Iloilo Provincial Super-Admin invited you to administer ${assignedMunicipality}. Activate your account within 24 hours: ${inviteUrl}\n\nIf you were not expecting this invitation, ignore this email.`,
+        html: `<div style="font-family:Arial,sans-serif;color:#0F172A;max-width:600px;margin:auto"><p style="color:#15803D;font-weight:bold">SALBARKAIN · ILOILO LGU</p><h1>Municipal admin invitation</h1><p>Hello ${escapeHtml(officerName.trim())},</p><p>The Iloilo Provincial Super-Admin invited you to administer <strong>${escapeHtml(assignedMunicipality)}</strong>.</p><p><a href="${escapeHtml(inviteUrl)}" style="display:inline-block;background:#15803D;color:#fff;padding:12px 18px;border-radius:8px;text-decoration:none">Activate LGU account</a></p><p>This single-use link expires in 24 hours. If you were not expecting this invitation, ignore this email.</p></div>`,
+      });
+      emailSent = true;
+    } catch (error) {
+      console.error('LGU invite email failed:', { code: error.code || 'SMTP_SEND_FAILED' });
+    }
+  }
+  if (!emailSent) console.info(`[LGU INVITE LINK for ${emailValue}]: ${inviteUrl}`);
+  res.status(isNewOfficer ? 201 : 200).json({ success: true, data: { officer: { id: user._id.toString(), officerName: user.name, email: user.email, assignedMunicipality, verificationStatus: 'pending', inviteExpires }, inviteUrl, emailSent, message: emailSent ? 'Invite email sent via SMTP.' : 'Email is not available right now. Copy this secure activation link and share it with the officer.' } });
+}
+
+async function listLguAdmins(req, res) {
+  if (req.user.assignedMunicipality !== 'ALL') throw httpError(403, 'PROVINCIAL_ADMIN_REQUIRED', 'Only the Iloilo Provincial Super-Admin can view municipal LGU invitations.');
+  const officers = await User.find({ role: 'admin', assignedMunicipality: { $ne: 'ALL' } })
+    .select('name email municipality assignedMunicipality verificationStatus verified createdAt inviteExpires')
+    .sort({ createdAt: -1 }).limit(200).lean();
+  res.set('Cache-Control', 'no-store').json({ success: true, data: { officers: officers.map((officer) => ({ id: String(officer._id), officerName: officer.name, email: officer.email, assignedMunicipality: officer.assignedMunicipality || officer.municipality, verificationStatus: officer.verificationStatus || (officer.verified ? 'verified' : 'pending'), createdAt: officer.createdAt, inviteExpires: officer.inviteExpires || null })) } });
 }
 
 async function leaderboard(req, res) {
@@ -279,4 +331,4 @@ async function setPartnerCertification(req, res) {
   res.json({ success: true, data: { id: user._id.toString(), zeroWasteCertified: user.zeroWasteCertified } });
 }
 
-module.exports = { overview, listVerifications, getVerificationDocument, reviewVerification, listFlaggedBatches, reviewFlaggedBatch, restoreFlaggedBatch, exportMenro, createOfficer, leaderboard, setPartnerCertification };
+module.exports = { overview, listVerifications, getVerificationDocument, reviewVerification, listFlaggedBatches, reviewFlaggedBatch, restoreFlaggedBatch, exportMenro, inviteLguAdmin, listLguAdmins, leaderboard, setPartnerCertification };

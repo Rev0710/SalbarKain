@@ -11,7 +11,7 @@ import OfflineIloiloLayer from '../components/OfflineIloiloLayer.jsx';
 
 const TABS = [
   ['overview', 'Municipal overview'], ['verifications', 'KYB & account status'], ['flagged', 'Trust & safety'],
-  ['ledger', 'MENRO impact ledger'], ['leaderboard', 'Zero-waste partners'],
+  ['ledger', 'MENRO impact ledger'], ['leaderboard', 'Zero-waste partners'], ['officers', 'LGU Officers'],
 ];
 const ACCOUNT_FILTERS = [
   ['pending', 'Pending review'], ['verified', 'Verified'], ['rejected-suspended', 'Rejected / suspended'], ['all', 'All accounts'],
@@ -71,24 +71,47 @@ function AdminSkeleton() {
   return <div className="admin-skeleton" aria-label="Loading admin command center" aria-busy="true"><div className="admin-skeleton-kpis">{[1, 2, 3, 4].map(item => <div key={item} className="admin-skeleton-block" />)}</div><div className="admin-skeleton-block admin-skeleton-content" /><div className="admin-skeleton-block admin-skeleton-content" /></div>;
 }
 
-function OfficerForm({ onCreated }) {
-  const [form, setForm] = useState({ name: '', email: '', password: '', municipality: 'Pavia' });
-  const [busy, setBusy] = useState(false); const [error, setError] = useState('');
+function LguInviteManager({ onNotice }) {
+  const municipalities = ['Iloilo City', 'Pavia', 'Santa Barbara', 'Oton', 'Leganes', 'Zarraga', 'Cabatuan', 'Pototan', 'Passi City', 'Miagao', 'Other Iloilo Municipality'];
+  const [form, setForm] = useState({ officerName: '', email: '', assignedMunicipality: 'Pavia' });
+  const [officers, setOfficers] = useState([]); const [loading, setLoading] = useState(true); const [busy, setBusy] = useState(false); const [error, setError] = useState(''); const [invite, setInvite] = useState(null); const [copied, setCopied] = useState(false);
+  const load = useCallback(async () => {
+    setLoading(true);
+    try { const { data } = await api.get('/admin/lgu-officers'); setOfficers(asArray(data?.data?.officers)); setError(''); }
+    catch (requestError) { setError(requestError.response?.data?.message || 'Municipal LGU officers could not be loaded.'); }
+    finally { setLoading(false); }
+  }, []);
+  useEffect(() => { load(); }, [load]);
   async function submit(event) {
-    event.preventDefault(); setBusy(true); setError('');
-    try { await api.post('/admin/create-officer', form); setForm({ name: '', email: '', password: '', municipality: 'Pavia' }); await onCreated(); }
-    catch (err) { setError(err.response?.data?.message || 'Could not create this municipal officer.'); }
+    event.preventDefault(); setBusy(true); setError(''); setInvite(null);
+    try {
+      const { data } = await api.post('/admin/invite-lgu', form);
+      setInvite(data?.data || null); setForm(current => ({ ...current, officerName: '', email: '' }));
+      await load();
+      onNotice(data?.data?.emailSent ? 'LGU invitation email sent.' : 'Invite created. Copy the activation link to share it securely.');
+    } catch (requestError) { setError(requestError.response?.data?.message || 'The LGU invitation could not be created.'); }
     finally { setBusy(false); }
   }
-  return <details className="admin-officer-panel"><summary>Create municipal admin</summary><form className="admin-officer-form" onSubmit={submit}>
-    <label className="field-label">Officer name<input className="field-input" required minLength="2" maxLength="100" value={form.name} onChange={e => setForm({ ...form, name: e.target.value })} /></label>
-    <label className="field-label">Email<input className="field-input" type="email" required value={form.email} onChange={e => setForm({ ...form, email: e.target.value })} /></label>
-    <label className="field-label">Temporary password<input className="field-input" type="password" minLength="10" required value={form.password} onChange={e => setForm({ ...form, password: e.target.value })} /></label>
-    <label className="field-label">Municipality<select className="field-select" value={form.municipality} onChange={e => setForm({ ...form, municipality: e.target.value })}>{['Iloilo City', 'Pavia', 'Santa Barbara', 'Oton', 'Leganes', 'Zarraga', 'Cabatuan', 'Pototan', 'Passi City', 'Miagao'].map(place => <option key={place}>{place}</option>)}</select></label>
-    {error && <p className="form-error" role="alert">{error}</p>}<button className="primary-button" disabled={busy}>{busy ? 'Creating…' : 'Create officer'}</button>
-  </form></details>;
+  async function copyLink() {
+    try { await navigator.clipboard.writeText(invite.inviteUrl); setCopied(true); window.setTimeout(() => setCopied(false), 1800); }
+    catch { setError('Copy was blocked by the browser. Select and copy the activation link below.'); }
+  }
+  return <div className="admin-invite-layout">
+    <section className="panel"><h2>Invite a municipal LGU admin</h2><p className="panel-subtitle">Only the Provincial Super-Admin can issue these one-time invitations. The officer sets their own password from the link, which expires after 24 hours.</p>
+      <form className="admin-officer-form" onSubmit={submit}>
+        <label className="field-label">Officer / office name<input className="field-input" required minLength="2" maxLength="100" value={form.officerName} onChange={event => setForm({ ...form, officerName: event.target.value })} /></label>
+        <label className="field-label">Official email<input className="field-input" type="email" required maxLength="254" value={form.email} onChange={event => setForm({ ...form, email: event.target.value })} /></label>
+        <label className="field-label">Assigned Iloilo municipality<select className="field-select" value={form.assignedMunicipality} onChange={event => setForm({ ...form, assignedMunicipality: event.target.value })}>{municipalities.map(place => <option key={place} value={place}>{place}</option>)}</select></label>
+        {error && <p className="form-error" role="alert">{error}</p>}
+        <button className="primary-button" type="submit" disabled={busy}>{busy ? 'Creating secure invite…' : 'Send LGU Invite'}</button>
+      </form>
+      {invite?.inviteUrl && <div className="lgu-invite-confirmation" role="status"><strong>{invite.emailSent ? 'Invite email sent via SMTP.' : 'Invite is ready to share.'}</strong><p>{invite.message}</p><div className="lgu-invite-copy-row"><input aria-label="LGU activation link" className="field-input" readOnly value={invite.inviteUrl} onFocus={event => event.target.select()} /><button className="secondary-button" type="button" onClick={copyLink}>{copied ? 'Copied' : 'Copy activation link'}</button></div><small>Single-use · expires {new Date(invite.officer?.inviteExpires).toLocaleString()}</small></div>}
+    </section>
+    <section className="panel"><div className="admin-ledger-heading"><div><h2>Municipal LGU officers</h2><p className="panel-subtitle">Pending invitations and active municipal admin accounts across Iloilo.</p></div><button className="secondary-button compact" type="button" onClick={load} disabled={loading}>{loading ? 'Refreshing…' : 'Refresh list'}</button></div>
+      {loading ? <p className="panel-subtitle" role="status">Loading municipal admins…</p> : officers.length ? <div className="admin-account-list">{officers.map(officer => { const status = officer.verificationStatus === 'verified' ? 'Active' : officer.inviteExpires && new Date(officer.inviteExpires) < new Date() ? 'Invite expired' : 'Pending activation'; return <article className="admin-account-row" key={officer.id}><div className="admin-account-main"><strong>{asText(officer.officerName, 'LGU officer')}</strong><span>{asText(officer.email)} · {asText(officer.assignedMunicipality)}</span><small>{officer.createdAt ? `Added ${new Date(officer.createdAt).toLocaleDateString()}` : 'Date unavailable'}</small></div><span className={`admin-status-badge ${status === 'Active' ? 'verified' : 'pending'}`}>{status}</span></article>; })}</div> : <div className="empty-state"><h3>No municipal officers yet</h3><p>Invited officers will appear here until they activate their accounts.</p></div>}
+    </section>
+  </div>;
 }
-
 function statusLabel(value) {
   const status = value === 'verified' ? 'verified' : ['rejected', 'suspended'].includes(value) ? value : 'pending';
   return status.charAt(0).toUpperCase() + status.slice(1);
@@ -209,7 +232,7 @@ export default function AdminQueue({ session = {}, onNotice = () => {} }) {
 
   return <main className="dashboard-shell admin-command-center">
     <header className="admin-command-header"><div><p className="eyebrow">Multi-LGU · MENRO command center</p><h1>SalbarKain Admin</h1><p>Verification, food rescue, and barangay impact for your jurisdiction.</p></div><span className="admin-jurisdiction">Jurisdiction: {jurisdiction}</span></header>
-    <div className="admin-tabs" role="tablist" aria-label="Admin command center sections">{TABS.map(([key, label]) => <button key={key} type="button" role="tab" aria-selected={tab === key} className={`filter-pill ${tab === key ? 'active' : ''}`} onClick={() => setTab(key)}>{label}</button>)}<button type="button" className="secondary-button" onClick={() => load({ manual: true })} disabled={loading}>{loading ? 'Refreshing…' : 'Refresh'}</button></div>
+    <div className="admin-tabs" role="tablist" aria-label="Admin command center sections">{TABS.filter(([key]) => key !== 'officers' || session.assignedMunicipality === 'ALL').map(([key, label]) => <button key={key} type="button" role="tab" aria-selected={tab === key} className={`filter-pill ${tab === key ? 'active' : ''}`} onClick={() => setTab(key)}>{label}</button>)}<button type="button" className="secondary-button" onClick={() => load({ manual: true })} disabled={loading}>{loading ? 'Refreshing…' : 'Refresh'}</button></div>
     {waking && <div className="alert-banner admin-wake-banner" role="status"><span>Waking up LGU server—retrying…</span><button className="secondary-button compact" onClick={() => load({ manual: true })} disabled={loading}>Retry now</button></div>}
     {error && <div className="alert-banner admin-error-banner" role="alert"><span>{error}</span><button className="secondary-button compact" onClick={() => load({ manual: true })} disabled={loading}>Retry</button></div>}
     {loading ? <AdminSkeleton /> : <>
@@ -218,7 +241,6 @@ export default function AdminQueue({ session = {}, onNotice = () => {} }) {
           ['Total meals rescued', `${formatNumber(kpis.mealsSaved)} packs`], ['Food waste diverted', `${formatNumber(kpis.foodDivertedKg, 1)} kg`], ['CO₂e prevented', `${formatNumber(kpis.co2PreventedKg, 1)} kg`], ['Pending KYB approvals', formatNumber(kpis.pendingReviewsCount)],
         ].map(([label, value]) => <article className="panel admin-kpi" key={label}><span>{label}</span><strong>{value}</strong></article>)}</section>
         <section className="panel admin-map-panel"><div><h2>Iloilo food rescue heatmap</h2><p className="panel-subtitle">Verified food partners and local activity inside Iloilo Province.</p></div><AdminMapBoundary><MapContainer center={ILOILO_CENTER} zoom={13} {...ILOILO_MAP_OPTIONS} scrollWheelZoom={false} className="admin-command-map"><OfflineIloiloLayer /><ReliableTileLayer /><HeatLayer features={features} /><MapPins features={features} /></MapContainer></AdminMapBoundary>{!features.length && <p className="panel-subtitle">No heatmap coordinates yet. The offline Iloilo guide is shown until partner activity points are available.</p>}</section>
-        {overview.jurisdiction?.assignedMunicipality === 'ALL' && <OfficerForm onCreated={async () => { await load(); onNotice('Municipal admin account created.'); }} />}
       </>}
 
       {tab === 'verifications' && <section className="panel"><div className="admin-ledger-heading"><div><h2>KYB documents & account status</h2><p className="panel-subtitle">Review submitted documents and manage partner access within your jurisdiction.</p></div><span className="admin-count">{filteredAccounts.length} accounts</span></div><div className="admin-status-filters" role="group" aria-label="Filter accounts by status">{ACCOUNT_FILTERS.map(([key, label]) => <button key={key} type="button" className={`filter-pill ${statusFilter === key ? 'active' : ''}`} aria-pressed={statusFilter === key} onClick={() => setStatusFilter(key)}>{label}</button>)}</div>
@@ -227,6 +249,8 @@ export default function AdminQueue({ session = {}, onNotice = () => {} }) {
       {tab === 'flagged' && <section className="panel"><h2>Trust, safety & flagged listings</h2><p className="panel-subtitle">Review listings hidden by the 3-flag community rule or food-safety reports.</p>{flaggedBatches.length ? <div className="inventory-list">{flaggedBatches.map((batch, index) => <article key={batch?._id || `flagged-${index}`} className="inventory-row"><img src={batch?.photoUrl || ''} alt={batch?.itemName ? `Photo of ${batch.itemName}` : 'Flagged batch'} /><div><h3>{asText(batch?.itemName, 'Surplus listing')}</h3><p>{asText(batch?.merchantId?.storeName, 'Local food partner')} · {asText(batch?.merchantId?.barangay, '')}, {asText(batch?.merchantId?.municipality, '')}</p><p>{batch?.foodSafetyFlagged ? `${formatNumber(batch?.spoilageReportCount)} food-safety reports` : `${formatNumber(batch?.reportCount)} community reports`} · {formatNumber(batch?.remainingQty)} portions remaining</p><span className="admin-status-badge pending">{batch?.foodSafetyFlagged ? 'Food safety review' : 'Community flagged'}</span></div><div className="admin-flag-actions"><button type="button" className="primary-button compact" disabled={busy === batch?._id} onClick={() => reviewFlag(batch?._id, 'restore')}>Clear flags & restore</button><button type="button" className="secondary-button compact admin-suspend-button" disabled={busy === batch?._id} onClick={() => reviewFlag(batch?._id, 'suspend')}>Remove & suspend merchant</button></div></article>)}</div> : <div className="empty-state"><h2>No flagged listings</h2><p>Nothing hidden in this jurisdiction needs review.</p></div>}</section>}
 
       {tab === 'ledger' && <section className="panel"><div className="admin-ledger-heading"><div><h2>MENRO barangay impact ledger</h2><p className="panel-subtitle">Completed rescues grouped by municipality and barangay.</p></div><button type="button" className="primary-button" onClick={exportLedger}>Download MENRO CSV</button></div>{menroStats.length ? <div className="admin-table-wrap"><table className="admin-impact-table"><thead><tr><th>Municipality</th><th>Barangay</th><th>Completed rescues</th><th>Food diverted (kg)</th><th>CO₂e prevented (kg)</th></tr></thead><tbody>{menroStats.map((row, index) => <tr key={`${asText(row?.municipality, 'municipality')}-${asText(row?.barangay, 'barangay')}-${index}`}><td>{asText(row?.municipality)}</td><td>{asText(row?.barangay)}</td><td>{formatNumber(row?.mealsSaved)}</td><td>{formatNumber(row?.foodDivertedKg, 2)}</td><td>{formatNumber(row?.co2PreventedKg, 2)}</td></tr>)}</tbody></table></div> : <div className="empty-state"><h2>No completed rescues yet</h2><p>Rescue totals will appear here after pickup passes are verified.</p></div>}</section>}
+
+      {tab === 'officers' && session.assignedMunicipality === 'ALL' && <LguInviteManager onNotice={onNotice} />}
 
       {tab === 'leaderboard' && <div className="admin-leaderboard-grid">{[
         ['Verified merchants · 50+ rescued packs', asArray(leaderboard.merchants), 'storeName'], ['Verified NGOs · 100+ rescued packs', asArray(leaderboard.ngos), 'name'],

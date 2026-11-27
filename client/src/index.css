@@ -333,6 +333,28 @@ input[type="checkbox"] { accent-color:#15803D; }
 .admin-tabs { display:flex; flex-wrap:wrap; align-items:center; gap:8px; border-bottom:1px solid #E2E8F0; padding-bottom:12px; }
 .admin-tabs [role=tab][aria-selected=true] { background:#15803D; border-color:#15803D; color:white; }
 .admin-tabs > .secondary-button { margin-left:auto; }
+.auth-role-tabs { display:flex; flex-wrap:wrap; gap:8px; margin-top:14px; }
+.civic-security-notice { margin-top:12px; border:1px solid #E2E8F0; border-left:3px solid #D97706; border-radius:8px; padding:11px 13px; color:#0F172A; background:#FFFFFF; font-size:13px; line-height:1.5; }
+.admin-demo-logins { display:flex; flex-wrap:wrap; align-items:center; gap:8px; margin-top:10px; }
+.admin-demo-logins > span { flex-basis:100%; color:#64748B; font-size:12px; }
+.admin-invite-layout { display:grid; grid-template-columns:minmax(0,1fr); gap:14px; }
+.admin-officer-form { display:grid; gap:12px; }
+.lgu-invite-confirmation { display:grid; gap:8px; margin-top:16px; padding:14px; border:1px solid rgba(21,128,61,.28); border-radius:10px; color:#0F172A; background:#F0FDF4; overflow-wrap:anywhere; }
+.lgu-invite-confirmation strong { color:#15803D; }
+.lgu-invite-confirmation p,.lgu-invite-confirmation small { margin:0; }
+.lgu-invite-copy-row { display:grid; grid-template-columns:minmax(0,1fr) auto; gap:8px; }
+.lgu-activation-shell { min-height:calc(100dvh - 160px); display:grid; place-items:center; }
+.lgu-activation-card { width:min(100%,620px); }
+.lgu-activation-card h1 { margin:4px 0 14px; font-size:clamp(28px,4vw,38px); letter-spacing:-.04em; }
+.lgu-jurisdiction-card { display:grid; gap:5px; margin:18px 0; padding:16px; border:1px solid #E2E8F0; border-radius:12px; background:#F8FAFC; overflow-wrap:anywhere; }
+.lgu-jurisdiction-card span { color:#64748B; font-size:13px; }
+.lgu-jurisdiction-card strong { font-size:18px; }
+.lgu-jurisdiction-card b { margin-top:5px; color:#15803D; }
+.lgu-activation-form { display:grid; gap:14px; margin-top:18px; }
+.lgu-activation-footnote { margin:18px 0 0; font-size:13px; }
+.lgu-activation-footnote a { color:#15803D; font-weight:600; }
+@media(min-width:900px) { .admin-invite-layout { grid-template-columns:minmax(0,1fr) minmax(0,1.15fr); align-items:start; } }
+@media(max-width:540px) { .lgu-invite-copy-row { grid-template-columns:1fr; } .auth-role-tabs .filter-pill { flex:1 1 100px; justify-content:center; } }
 .admin-kpi-grid { display:grid; grid-template-columns:repeat(3,minmax(0,1fr)); gap:12px; }
 .admin-kpi { display:grid; gap:8px; }
 .admin-kpi span { color:#64748B; font-size:13px; }

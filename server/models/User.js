@@ -16,6 +16,8 @@ const userSchema = new Schema({
   passwordHash: { type: String, required: true, select: false },
   passwordResetCodeHash: { type: String, default: null, select: false },
   passwordResetExpires: { type: Date, default: null, select: false },
+  inviteTokenHash: { type: String, default: null, select: false },
+  inviteExpires: { type: Date, default: null, select: false },
   phone: { type: String, trim: true, maxlength: 24 },
   storeName: { type: String, trim: true, maxlength: 120, required() { return this.role === 'merchant'; } },
   category: { type: String, enum: ['bakery', 'eatery', 'grocery', 'other'], required() { return this.role === 'merchant'; } },

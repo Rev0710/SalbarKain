@@ -1,9 +1,11 @@
 const express = require('express');
+const { rateLimit } = require('express-rate-limit');
 const asyncHandler = require('../middleware/asyncHandler');
 const { authenticate, authorizeRoles } = require('../middleware/auth');
-const { overview, listVerifications, getVerificationDocument, reviewVerification, listFlaggedBatches, reviewFlaggedBatch, restoreFlaggedBatch, exportMenro, createOfficer, leaderboard, setPartnerCertification } = require('../controllers/adminController');
+const { overview, listVerifications, getVerificationDocument, reviewVerification, listFlaggedBatches, reviewFlaggedBatch, restoreFlaggedBatch, exportMenro, inviteLguAdmin, listLguAdmins, leaderboard, setPartnerCertification } = require('../controllers/adminController');
 
 const router = express.Router();
+const lguInviteLimiter = rateLimit({ windowMs: 60 * 60 * 1000, limit: 10, standardHeaders: 'draft-8', legacyHeaders: false, message: { success: false, code: 'LGU_INVITE_RATE_LIMITED', message: 'Too many LGU invitations were issued. Try again in an hour.' } });
 router.use(authenticate, authorizeRoles('admin'));
 router.get('/overview', asyncHandler(overview));
 router.get('/verifications', asyncHandler(listVerifications));
@@ -14,7 +16,8 @@ router.patch('/flagged/:batchId', asyncHandler(reviewFlaggedBatch));
 router.get('/flagged-batches', asyncHandler(listFlaggedBatches));
 router.patch('/flagged-batches/:batchId/restore', asyncHandler(restoreFlaggedBatch));
 router.get('/export-menro', asyncHandler(exportMenro));
-router.post('/create-officer', asyncHandler(createOfficer));
+router.post('/invite-lgu', lguInviteLimiter, asyncHandler(inviteLguAdmin));
+router.get('/lgu-officers', asyncHandler(listLguAdmins));
 router.get('/leaderboard', asyncHandler(leaderboard));
 router.patch('/leaderboard/:userId/certification', asyncHandler(setPartnerCertification));
 module.exports = router;
