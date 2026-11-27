@@ -1,5 +1,5 @@
 import { CircleMarker, Pane, Polygon, Polyline, Tooltip } from 'react-leaflet';
-import { ILOILO_MAX_BOUNDS } from '../utils/iloiloMap.js';
+import { ILOILO_CENTER, ILOILO_MAX_BOUNDS } from '../utils/iloiloMap.js';
 
 // A small, locally rendered regional guide map sits beneath live map tiles.
 // Coordinates are deliberately schematic but remain geographically bounded
@@ -25,17 +25,28 @@ const mainRoads = [
   [[383, 274], [442, 252], [496, 232], [552, 213], [603, 196], [653, 180], [709, 167]],
 ];
 
+// City-scale roads are centered on the default Iloilo City / Pavia view.
+// They remain visible even when the user has not zoomed out to the province.
+const cityRoads = [
+  [[10.94, 122.54], [10.86, 122.55], [10.80, 122.55], [10.745, 122.55], [10.70, 122.56], [10.64, 122.57]],
+  [[10.79, 122.45], [10.775, 122.49], [10.76, 122.52], [10.745, 122.55], [10.73, 122.59], [10.72, 122.64]],
+  [[10.70, 122.47], [10.715, 122.50], [10.73, 122.53], [10.745, 122.55], [10.77, 122.57], [10.80, 122.60], [10.83, 122.63]],
+  [[10.82, 122.50], [10.79, 122.52], [10.765, 122.54], [10.745, 122.55], [10.72, 122.57], [10.70, 122.60]],
+];
+
 const rivers = [
   [[792, 156], [760, 214], [767, 260], [724, 302], [691, 334], [701, 370], [671, 411], [646, 444], [654, 481], [623, 518], [591, 557], [602, 594], [566, 634]],
   [[625, 466], [565, 448], [519, 460], [472, 435], [427, 411], [396, 420], [355, 396]],
   [[687, 333], [633, 321], [605, 297], [564, 280]],
 ];
 
+const cityWaterway = [[10.81, 122.62], [10.78, 122.60], [10.76, 122.585], [10.745, 122.57], [10.725, 122.565], [10.70, 122.555]];
+
 const places = [
-  ['Iloilo City', [445, 556]], ['Pavia', [421, 526]], ['Santa Barbara', [419, 502]],
-  ['Leganes', [470, 532]], ['Zarraga', [495, 515]], ['Oton', [339, 581]],
-  ['Cabatuan', [383, 397]], ['Miagao', [350, 465]], ['Pototan', [390, 317]],
-  ['Passi City', [470, 220]], ['Jordan · Guimaras', [480, 728]],
+  ['Iloilo City', [10.72, 122.56]], ['Pavia', [10.775, 122.545]], ['Santa Barbara', [10.823, 122.535]],
+  ['Leganes', [10.783, 122.59]], ['Zarraga', [10.82, 122.635]], ['Oton', [10.693, 122.473]],
+  ['Cabatuan', [10.879, 122.486]], ['Miagao', [10.644, 122.235]], ['Pototan', [10.944, 122.635]],
+  ['Passi City', [11.107, 122.64]], ['Jordan · Guimaras', [10.66, 122.59]],
 ];
 
 const guimaras = [[445, 668], [474, 644], [517, 650], [535, 680], [548, 704], [540, 731], [521, 752], [504, 774], [480, 798], [453, 793], [427, 789], [411, 764], [414, 737], [416, 710], [425, 686]];
@@ -56,14 +67,24 @@ export default function OfflineIloiloLayer() {
       {rivers.map((river, index) => (
         <Polyline key={`river-${index}`} positions={path(river)} pathOptions={{ color: '#9fc4cf', weight: 2.5, opacity: 0.9 }} interactive={false} />
       ))}
+      <Polyline positions={cityWaterway} pathOptions={{ color: '#83b9c8', weight: 3.5, opacity: 0.95 }} interactive={false} />
       {mainRoads.map((road, index) => (
         <Polyline key={`road-casing-${index}`} positions={path(road)} pathOptions={{ color: '#fffdf5', weight: index < 3 ? 7 : 5, opacity: 0.98 }} interactive={false} />
       ))}
       {mainRoads.map((road, index) => (
         <Polyline key={`road-${index}`} positions={path(road)} pathOptions={{ color: index < 3 ? '#d4a86a' : '#d9c8a9', weight: index < 3 ? 2.5 : 1.5, opacity: 0.95 }} interactive={false} />
       ))}
-      {places.map(([name, xy]) => (
-        <CircleMarker key={name} center={point(xy)} radius={3.5} pathOptions={{ color: '#ffffff', weight: 1.5, fillColor: '#15803D', fillOpacity: 1 }} interactive={false}>
+      {cityRoads.map((road, index) => (
+        <Polyline key={`city-road-casing-${index}`} positions={road} pathOptions={{ color: '#fffdf5', weight: index < 2 ? 8 : 5.5, opacity: 1 }} interactive={false} />
+      ))}
+      {cityRoads.map((road, index) => (
+        <Polyline key={`city-road-${index}`} positions={road} pathOptions={{ color: index < 2 ? '#d29d58' : '#c8bba1', weight: index < 2 ? 3 : 2, opacity: 1 }} interactive={false} />
+      ))}
+      <CircleMarker center={ILOILO_CENTER} radius={6} pathOptions={{ color: '#ffffff', weight: 2, fillColor: '#15803D', fillOpacity: 1 }} interactive={false}>
+        <Tooltip permanent direction="top" offset={[0, -8]} pane="offlineIloiloBase" className="offline-map-label offline-map-label--city">ILOILO CITY · OFFLINE GUIDE</Tooltip>
+      </CircleMarker>
+      {places.map(([name, coordinates]) => (
+        <CircleMarker key={name} center={coordinates} radius={3.5} pathOptions={{ color: '#ffffff', weight: 1.5, fillColor: '#15803D', fillOpacity: 1 }} interactive={false}>
           <Tooltip permanent direction="right" offset={[5, 0]} pane="offlineIloiloBase" className="offline-map-label">{name}</Tooltip>
         </CircleMarker>
       ))}
