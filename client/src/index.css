@@ -882,6 +882,22 @@ img,video,canvas,iframe,svg { max-width:100%; }
 .pass-rating-skip { min-height:44px; border:0; color:rgb(255 255 255 / 75%); background:transparent; font-size:14px; cursor:pointer; }
 .pass-rating-skip:hover { color:#FFFFFF; }
 .pass-rating-prompt { margin:0 0 4px; color:#FFFFFF; font-size:14px; font-weight:700; text-align:center; }
+.impact-tier-pill { display:inline-flex; width:max-content; max-width:100%; margin:12px 0 0; border:1px solid rgb(21 128 61 / 24%); border-radius:999px; padding:7px 11px; color:#15803D; background:rgb(21 128 61 / 8%); font-size:12px; font-weight:700; }
+.impact-load-error { display:grid; justify-items:start; gap:10px; margin-top:16px; }
+.impact-load-error p { margin:0; color:#B45309; font-size:13px; line-height:1.5; }
+.app-toast { position:fixed; z-index:50; left:max(16px,env(safe-area-inset-left)); bottom:calc(4rem + env(safe-area-inset-bottom)); display:flex; width:calc(100vw - 2rem); max-width:360px; min-height:64px; align-items:center; gap:12px; overflow:visible; border:1px solid rgb(21 128 61 / 40%); border-radius:16px; padding:12px 42px 12px 14px; color:#FFFFFF; background:#0B2915; box-shadow:0 12px 30px rgb(15 23 42 / 24%); opacity:0; pointer-events:none; transform:translateY(12px); transition:opacity .32s ease,transform .32s ease; }
+.app-toast.is-visible { opacity:1; pointer-events:auto; transform:translateY(0); }
+.app-toast.is-leaving { opacity:0; pointer-events:none; transform:translateY(12px); }
+.app-toast-shimmer { position:absolute; z-index:0; inset:0; overflow:hidden; border-radius:inherit; pointer-events:none; }
+.app-toast-shimmer::after { position:absolute; top:-50%; left:-25%; width:64px; height:200%; background:linear-gradient(90deg,transparent,rgb(255 255 255 / 20%),transparent); content:""; transform:translateX(-150%) rotate(25deg); animation:glassSweep 2.5s ease-in-out infinite; }
+.app-toast-icon { position:relative; z-index:1; display:grid; flex:0 0 36px; width:36px; height:36px; place-items:center; border:1px solid rgb(21 128 61 / 50%); border-radius:50%; color:#4ADE80; background:#12381E; font-size:18px; font-weight:800; }
+.app-toast-icon.warning { color:#FBBF24; border-color:rgb(217 119 6 / 55%); }
+.app-toast-copy { position:relative; z-index:1; min-width:0; color:#FFFFFF; font-size:12px; font-weight:650; line-height:1.45; overflow-wrap:anywhere; }
+.app-toast-close { position:absolute; z-index:2; top:5px; right:6px; display:grid; width:30px; height:30px; place-items:center; border:0; border-radius:50%; color:#FFFFFF; background:transparent; font-size:20px; opacity:.7; cursor:pointer; }
+.app-toast-close:hover,.app-toast-close:focus-visible { background:rgb(255 255 255 / 12%); opacity:1; }
+.app-toast-diamond { position:absolute; z-index:0; bottom:-6px; left:50%; width:12px; height:12px; background:#15803D; transform:translateX(-50%) rotate(45deg); }
+@media(max-width:600px) { .app-toast { left:max(12px,env(safe-area-inset-left)); width:calc(100vw - 24px); gap:10px; padding:11px 39px 11px 12px; } .app-toast-copy { font-size:11px; } }
+@media(prefers-reduced-motion:reduce) { .app-toast,.app-toast * { animation-duration:.01ms!important; transition-duration:.01ms!important; } }
 .review-thank-you { margin:20px 0 0; border:1px solid rgb(74 222 128 / 35%); border-radius:12px; padding:14px; color:#DCFCE7; background:rgb(21 128 61 / 24%); font-weight:650; }
 .review-error { margin:0; color:#FCD34D; font-size:13px; }
 .public-merchant-reviews { display:grid; gap:8px; margin-top:12px; border-top:1px solid #E2E8F0; padding-top:12px; }

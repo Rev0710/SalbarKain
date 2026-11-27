@@ -7,6 +7,7 @@ import MarketplacePage from './pages/MarketplacePage.jsx';
 import ClaimDrawer from './components/ClaimDrawer.jsx';
 import QrPassModal from './components/QrPassModal.jsx';
 import MyImpactModal from './components/MyImpactModal.jsx';
+import Toast from './components/Toast.jsx';
 import LocationPicker from './components/LocationPicker.jsx';
 import RescueToast from './components/RescueToast.jsx';
 import Footer from './components/Footer.jsx';
@@ -202,7 +203,7 @@ function AppShell() {
     {impactOpen && <MyImpactModal session={session} onClose={() => setImpactOpen(false)} />}
     {claimBatch && <ClaimDrawer batch={claimBatch} verifiedNgo={session?.role === 'ngo' && (session?.verificationStatus === 'verified' || session?.verified === true)} onClose={() => setClaimBatch(null)} onSubmit={submitClaim} />}
     {pickupPass && <QrPassModal pass={pickupPass} onStatusChange={handlePickupStatusChange} onClose={(result) => { setPickupPass(null); if (result?.cancelled) { localStorage.removeItem(PICKUP_PASS_KEY); localStorage.removeItem(LEGACY_PICKUP_PASS_KEY); setSavedPass(null); setMarketRefresh(value => value + 1); setNotice('Pickup cancelled. The portions are back in the marketplace.'); } else if (result?.status) { localStorage.removeItem(PICKUP_PASS_KEY); localStorage.removeItem(LEGACY_PICKUP_PASS_KEY); setSavedPass(null); } }} />}
-    {notice && <div className="toast" role="status">{notice}<button onClick={() => setNotice('')} aria-label="Dismiss">×</button></div>}
+    <Toast message={notice} onDismiss={() => setNotice('')} />
   </div>;
 }
 
