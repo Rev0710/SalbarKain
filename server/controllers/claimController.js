@@ -40,10 +40,27 @@ function isDuplicateKey(error) {
   return error && error.code === 11000;
 }
 
+function normalizeQrToken(value) {
+  const token = typeof value === 'string' ? value.trim() : '';
+  if (/^[A-HJ-NP-Z2-9]{6}$/i.test(token)) return token.toUpperCase();
+  if (/^[a-f0-9]{64}$/i.test(token)) return token.toLowerCase();
+  return null;
+}
+
+async function generateUniquePickupCode() {
+  const alphabet = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
+  for (let attempt = 0; attempt < 12; attempt += 1) {
+    const bytes = crypto.randomBytes(6);
+    const token = [...bytes].map((byte) => alphabet[byte % alphabet.length]).join('');
+    if (!(await Claim.exists({ qrToken: token }))) return token;
+  }
+  throw httpError(503, 'PICKUP_CODE_UNAVAILABLE', 'A pickup code could not be generated. Please try again.');
+}
+
 async function createClaim(req, res) {
   const input = validateClaimBody(req.body);
   const session = await mongoose.startSession();
-  const qrToken = crypto.randomBytes(32).toString('hex');
+  const qrToken = await generateUniquePickupCode();
   const now = new Date();
   const pickupDeadline = new Date(now.getTime() + 45 * 60 * 1000);
   let createdClaim;
@@ -144,9 +161,9 @@ async function createClaim(req, res) {
 }
 
 async function cancelClaim(req, res) {
-  const { qrToken } = req.params;
+  const qrToken = normalizeQrToken(req.params.qrToken);
   const deviceToken = req.body?.deviceToken;
-  if (!/^[a-f0-9]{64}$/i.test(qrToken || '')) throw httpError(404, 'CLAIM_NOT_FOUND', 'Pickup pass was not found.');
+  if (!qrToken) throw httpError(404, 'CLAIM_NOT_FOUND', 'Pickup pass was not found.');
   if (typeof deviceToken !== 'string' || !/^[a-zA-Z0-9-]{16,100}$/.test(deviceToken)) {
     throw httpError(400, 'INVALID_DEVICE_TOKEN', 'This device could not verify the pickup pass.');
   }
@@ -195,8 +212,8 @@ async function cancelClaim(req, res) {
 }
 
 async function verifyClaim(req, res) {
-  const { qrToken } = req.params;
-  if (!/^[a-f0-9]{64}$/i.test(qrToken)) {
+  const qrToken = normalizeQrToken(req.params.qrToken);
+  if (!qrToken) {
     throw httpError(404, 'CLAIM_NOT_FOUND', 'Pickup pass was not found.');
   }
 
@@ -319,8 +336,8 @@ async function merchantImpact(req, res) {
 }
 
 async function getClaimStatus(req, res) {
-  const { qrToken } = req.params;
-  if (!/^[a-f0-9]{64}$/i.test(qrToken || '')) throw httpError(404, 'CLAIM_NOT_FOUND', 'Pickup pass was not found.');
+  const qrToken = normalizeQrToken(req.params.qrToken);
+  if (!qrToken) throw httpError(404, 'CLAIM_NOT_FOUND', 'Pickup pass was not found.');
   const claim = await Claim.findOne({ qrToken })
     .select('+qrToken status qty pickupDeadline batchId merchantId')
     .populate({ path: 'batchId', select: 'itemName' })
@@ -343,9 +360,42 @@ async function getClaimStatus(req, res) {
   });
 }
 
+async function previewClaim(req, res) {
+  const qrToken = normalizeQrToken(req.params.qrToken);
+  if (!qrToken) throw httpError(404, 'CLAIM_NOT_FOUND', 'Pickup pass was not found.');
+  const claim = await Claim.findOne({ qrToken })
+    .select('+qrToken buyerName qty priceAtClaim pickupDeadline status merchantId batchId')
+    .populate({ path: 'batchId', select: 'itemName' })
+    .populate({ path: 'merchantId', select: 'storeName' })
+    .lean();
+  if (!claim || String(claim.merchantId?._id || claim.merchantId) !== req.user.id) {
+    throw httpError(404, 'CLAIM_NOT_FOUND', 'Pickup pass was not found for this store.');
+  }
+  if (claim.status !== 'pending') throw httpError(409, 'CLAIM_NOT_PENDING', 'This pickup pass is no longer waiting for handoff.');
+  const now = new Date();
+  if (new Date(claim.pickupDeadline) <= now) {
+    await expireClaimAndRestore(claim._id, now);
+    throw httpError(410, 'PICKUP_PASS_EXPIRED', 'This pickup pass has expired.');
+  }
+  res.set('Cache-Control', 'no-store').json({
+    success: true,
+    data: {
+      claim: {
+        qrToken: claim.qrToken,
+        buyerName: claim.buyerName,
+        quantity: claim.qty,
+        itemName: claim.batchId?.itemName || 'Surplus batch',
+        storeName: claim.merchantId?.storeName || 'Food partner',
+        totalToCollect: Number((Number(claim.priceAtClaim || 0) * claim.qty).toFixed(2)),
+        pickupDeadline: claim.pickupDeadline,
+      },
+    },
+  });
+}
+
 async function listRecentRescues(_req, res) {
   const claims = await Claim.find({ status: 'completed' })
-    .select('buyerName qty batchId merchantId updatedAt')
+    .select('buyerName qty priceAtClaim batchId merchantId updatedAt')
     .populate({ path: 'batchId', select: 'itemName' })
     .populate({ path: 'merchantId', select: 'storeName municipality' })
     .sort({ updatedAt: -1 })
@@ -356,6 +406,7 @@ async function listRecentRescues(_req, res) {
     id: claim._id.toString(),
     buyerFirstName: String(claim.buyerName || 'Community member').trim().split(/\s+/)[0] || 'Community member',
     quantity: Number(claim.qty) || 0,
+    totalPrice: Number((Number(claim.priceAtClaim || 0) * Number(claim.qty || 0)).toFixed(2)),
     itemName: claim.batchId?.itemName || 'surplus food',
     storeName: claim.merchantId?.storeName || 'a local food partner',
     municipality: claim.merchantId?.municipality || 'Iloilo Province',
@@ -364,4 +415,4 @@ async function listRecentRescues(_req, res) {
   res.set('Cache-Control', 'no-store').json({ success: true, data: { rescues } });
 }
 
-module.exports = { createClaim, cancelClaim, verifyClaim, listMerchantActiveClaims, merchantImpact, getClaimStatus, listRecentRescues };
+module.exports = { createClaim, cancelClaim, verifyClaim, listMerchantActiveClaims, merchantImpact, getClaimStatus, listRecentRescues, previewClaim };

@@ -8,7 +8,8 @@ import ClaimDrawer from './components/ClaimDrawer.jsx';
 import QrPassModal from './components/QrPassModal.jsx';
 import MyImpactModal from './components/MyImpactModal.jsx';
 import LocationPicker from './components/LocationPicker.jsx';
-import RescueTicker from './components/RescueTicker.jsx';
+import RescueToast from './components/RescueToast.jsx';
+import Footer from './components/Footer.jsx';
 import HowItWorksPage from './pages/HowItWorksPage.jsx';
 import AboutPage from './pages/AboutPage.jsx';
 
@@ -180,12 +181,12 @@ function AppShell() {
         </div>
       </div>
     </header>
-    <div className="app-main flex-1 pb-12">
+    <div className="app-main flex-1 pb-20">
       {view === 'admin' ? session?.role === 'admin' ? <Suspense fallback={<main className="dashboard-shell"><p className="loading-line">Opening the admin command center…</p></main>}><AdminQueue session={session} onNotice={setNotice} /></Suspense> : <main className="dashboard-shell"><section className="panel"><h1>Admin access required</h1><p className="panel-subtitle">Sign in with an administrator account to open this command center.</p><button className="primary-button" onClick={() => setLoginOpen(true)}>Sign in</button></section></main> : view === 'dashboard' && session ? <Suspense fallback={<main className="dashboard-shell"><p className="loading-line">Opening your partner workspace…</p></main>}><PartnerDashboardPage session={session} onBrowse={() => navigate('/')} onNotice={setNotice} onSavePass={savePass} onPassStatusChange={handlePickupStatusChange} /></Suspense> : view === 'how' ? <HowItWorksPage /> : view === 'about' ? <AboutPage /> : <MarketplacePage session={session} onClaim={setClaimBatch} onPartnerSignIn={() => setLoginOpen(true)} onNotice={setNotice} refreshTrigger={marketRefresh} />}
     </div>
     {savedPass && <button type="button" className="active-pass-fab" onClick={() => setPickupPass(savedPass)}>My Active QR Pass</button>}
-    <RescueTicker />
-    <footer className="site-footer"><span>SalbarKain</span><span>Local surplus food rescue · Find partners near you</span><span className="footer-device">No buyer account required</span></footer>
+    <RescueToast />
+    <Footer />
     {loginOpen && <AuthModal onClose={() => setLoginOpen(false)} onLogin={handleLogin} />}
     {logoutConfirmOpen && <div className="overlay logout-confirm-overlay" role="presentation" onMouseDown={event => event.target === event.currentTarget && setLogoutConfirmOpen(false)}><section className="dialog logout-confirm-dialog" role="alertdialog" aria-modal="true" aria-labelledby="logout-confirm-title" aria-describedby="logout-confirm-copy"><p className="eyebrow">Account session</p><h2 id="logout-confirm-title">Sign out of SalbarKain?</h2><p id="logout-confirm-copy">You can sign back in anytime to manage your store and pickup queue.</p><div className="logout-confirm-actions"><button type="button" className="secondary-button" onClick={() => setLogoutConfirmOpen(false)}>Stay signed in</button><button type="button" className="primary-button" onClick={logout}>Sign out</button></div></section></div>}
     {impactOpen && <MyImpactModal session={session} onClose={() => setImpactOpen(false)} />}

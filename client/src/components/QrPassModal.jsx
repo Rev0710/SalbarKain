@@ -20,6 +20,7 @@ export default function QrPassModal({ pass, onClose, onStatusChange }) {
   const [confirmCancel, setConfirmCancel] = useState(false);
   const [cancelBusy, setCancelBusy] = useState(false);
   const [cancelError, setCancelError] = useState('');
+  const [copiedCode, setCopiedCode] = useState(false);
   const handledTerminal = useRef(false);
   const onStatusChangeRef = useRef(onStatusChange);
   onStatusChangeRef.current = onStatusChange;
@@ -90,6 +91,25 @@ export default function QrPassModal({ pass, onClose, onStatusChange }) {
   const quantity = Number(pass.quantity || pass.qty || 1);
   const storeName = batch.merchantId?.storeName || pass.storeName || 'Food partner';
   const totalPrice = Number(pass.totalPrice ?? (Number(pass.priceAtClaim || 0) * quantity));
+  const displayToken = String(pass.qrToken || '').trim().toUpperCase();
+
+  async function copyPickupCode() {
+    try {
+      if (navigator.clipboard?.writeText) await navigator.clipboard.writeText(displayToken);
+      else {
+        const helper = document.createElement('textarea');
+        helper.value = displayToken;
+        helper.style.position = 'fixed';
+        helper.style.opacity = '0';
+        document.body.appendChild(helper);
+        helper.select();
+        document.execCommand('copy');
+        helper.remove();
+      }
+      setCopiedCode(true);
+      window.setTimeout(() => setCopiedCode(false), 1800);
+    } catch { setCopiedCode(false); }
+  }
 
   async function cancelReservation() {
     setCancelBusy(true);
@@ -127,7 +147,8 @@ export default function QrPassModal({ pass, onClose, onStatusChange }) {
         <p className="eyebrow">Your digital pickup pass</p>
         <h2 id="pass-title" className="mt-2 text-2xl font-semibold">Show this QR at pickup</h2>
         <p className={`pass-countdown ${time === '00:00' ? 'expired' : ''}`} role="timer" aria-label="Time remaining">{time}</p>
-        <div className="pass-qr"><QRCodeSVG value={pass.qrToken} size={190} level="M" includeMargin /></div>
+        <div className="pass-qr"><QRCodeSVG value={displayToken} size={190} level="M" includeMargin /></div>
+        <div className="pickup-code-block"><span>Pickup code</span><div><code>{displayToken}</code><button type="button" className="secondary-button compact" onClick={copyPickupCode}>{copiedCode ? 'Copied' : 'Copy code'}</button></div></div>
         <p className="text-sm font-semibold">{itemName} · {storeName}</p>
         {(pass.storeAddress || batch.merchantId?.address) && <p className="mt-1 text-xs text-muted">{pass.storeAddress || batch.merchantId.address}</p>}
         <p className="mt-1 text-xs text-muted">{totalPrice > 0 ? `Pay ₱${totalPrice.toFixed(2)} by cash or GCash at the store counter. ` : 'Free pickup. '}Pickup before the timer ends.</p>
@@ -137,7 +158,7 @@ export default function QrPassModal({ pass, onClose, onStatusChange }) {
         {cancelError && <p className="form-error mt-3" role="alert">{cancelError}</p>}
         {confirmCancel ? <div className="cancel-pass-confirm" role="group" aria-label="Confirm pickup cancellation"><p>Cancel this reservation? The portions will return to the marketplace and this QR pass will stop working.</p><div><button type="button" className="secondary-button" disabled={cancelBusy} onClick={() => setConfirmCancel(false)}>Keep pass</button><button type="button" className="cancel-pass-button" disabled={cancelBusy} onClick={cancelReservation}>{cancelBusy ? 'Cancelling…' : 'Yes, cancel reservation'}</button></div></div> : <button type="button" className="cancel-pass-button mt-3 w-full" disabled={time === '00:00' || cancelBusy} onClick={() => setConfirmCancel(true)}>Cancel pickup reservation</button>}
         {time === '00:00' && <p className="mt-2 text-xs text-muted" role="status">Checking whether this pickup pass has expired…</p>}
-        <p className="mt-4"><span className="pass-code">Pass {pass.qrToken.slice(0, 12)}…</span></p>
+        <p className="mt-4"><span className="pass-code">Show the QR or give this code to the merchant.</span></p>
       </>}
     </section>
   </div>;
