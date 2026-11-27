@@ -266,4 +266,56 @@ async function verifyClaim(req, res) {
   });
 }
 
-module.exports = { createClaim, cancelClaim, verifyClaim };
+async function listMerchantActiveClaims(req, res) {
+  const now = new Date();
+  const claims = await Claim.find({
+    merchantId: req.user.id,
+    status: 'pending',
+    pickupDeadline: { $gt: now },
+  })
+    .select('+qrToken buyerName qty priceAtClaim pickupDeadline batchId')
+    .populate({ path: 'batchId', select: 'itemName photoUrl' })
+    .sort({ pickupDeadline: 1 })
+    .lean();
+
+  res.set('Cache-Control', 'no-store').json({
+    success: true,
+    data: {
+      claims: claims.map((claim) => ({
+        id: claim._id.toString(),
+        qrToken: claim.qrToken,
+        buyerName: claim.buyerName,
+        qty: claim.qty,
+        priceAtClaim: claim.priceAtClaim,
+        totalToCollect: Number((Number(claim.priceAtClaim || 0) * claim.qty).toFixed(2)),
+        pickupDeadline: claim.pickupDeadline,
+        itemName: claim.batchId?.itemName || 'Surplus batch',
+        photoUrl: claim.batchId?.photoUrl || '',
+      })),
+    },
+  });
+}
+
+async function merchantImpact(req, res) {
+  const [totals] = await Claim.aggregate([
+    { $match: { merchantId: new mongoose.Types.ObjectId(req.user.id), status: 'completed' } },
+    { $group: {
+      _id: null,
+      completedRescues: { $sum: 1 },
+      rescuedPacks: { $sum: '$qty' },
+      revenueRecovered: { $sum: { $multiply: ['$priceAtClaim', '$qty'] } },
+    } },
+  ]);
+  const completedRescues = Number(totals?.completedRescues || 0);
+  res.set('Cache-Control', 'no-store').json({
+    success: true,
+    data: {
+      completedRescues,
+      rescuedPacks: Number(totals?.rescuedPacks || 0),
+      foodDivertedKg: Number((completedRescues * 0.5).toFixed(1)),
+      revenueRecovered: Number((totals?.revenueRecovered || 0).toFixed(2)),
+    },
+  });
+}
+
+module.exports = { createClaim, cancelClaim, verifyClaim, listMerchantActiveClaims, merchantImpact };

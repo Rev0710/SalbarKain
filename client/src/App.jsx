@@ -91,7 +91,7 @@ function AuthModal({ onClose, onLogin }) {
 function AppShell() {
   const location = useLocation(); const navigate = useNavigate();
   const [session, setSession] = useState(() => { try { return JSON.parse(localStorage.getItem('salbarkain:auth') || 'null'); } catch { return null; } });
-  const [loginOpen, setLoginOpen] = useState(false); const [impactOpen, setImpactOpen] = useState(false); const [claimBatch, setClaimBatch] = useState(null); const [pickupPass, setPickupPass] = useState(null); const [savedPass, setSavedPass] = useState(readPickupPass); const [notice, setNotice] = useState('');
+  const [loginOpen, setLoginOpen] = useState(false); const [logoutConfirmOpen, setLogoutConfirmOpen] = useState(false); const [impactOpen, setImpactOpen] = useState(false); const [claimBatch, setClaimBatch] = useState(null); const [pickupPass, setPickupPass] = useState(null); const [savedPass, setSavedPass] = useState(readPickupPass); const [notice, setNotice] = useState('');
   const [marketRefresh, setMarketRefresh] = useState(0);
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
   const view = location.pathname === '/about' ? 'about' : location.pathname === '/how-it-works' ? 'how' : location.pathname === '/admin' ? 'admin' : location.pathname === '/login' ? 'login' : location.pathname === '/workspace' ? 'dashboard' : 'market';
@@ -111,7 +111,8 @@ function AppShell() {
     return () => window.clearInterval(timer);
   }, []);
   function handleLogin(data) { const next = { ...data.user, token: data.token }; api.defaults.headers.common.Authorization = `Bearer ${next.token}`; localStorage.setItem('salbarkain:auth', JSON.stringify(next)); setSession(next); setLoginOpen(false); setMobileMenuOpen(false); navigate(next.role === 'admin' ? '/admin' : '/workspace'); }
-  function logout() { delete api.defaults.headers.common.Authorization; localStorage.removeItem('salbarkain:auth'); setSession(null); setMobileMenuOpen(false); navigate('/'); }
+  function requestLogout() { setMobileMenuOpen(false); setLogoutConfirmOpen(true); }
+  function logout() { delete api.defaults.headers.common.Authorization; localStorage.removeItem('salbarkain:auth'); setSession(null); setMobileMenuOpen(false); setLogoutConfirmOpen(false); navigate('/'); }
   async function submitClaim({ buyerName, phone, qty, safetyAcknowledged }) {
     try {
       const { data } = await api.post('/claims', { batchId: claimBatch._id || claimBatch.id, qty, buyerName, phone, deviceToken: getDeviceToken(), safetyAcknowledged });
@@ -128,7 +129,7 @@ function AppShell() {
     }
   }
   function savePass(pass) { localStorage.setItem(PICKUP_PASS_KEY, JSON.stringify(pass)); localStorage.removeItem(LEGACY_PICKUP_PASS_KEY); setSavedPass(pass); }
-  return <div className="app-frame">
+  return <div className="app-frame min-h-screen flex flex-col bg-[#F8FAFC]">
     <header className="site-header">
       <div className="nav-inner">
         <Link className="brand" to="/">SalbarKain<span>.</span></Link>
@@ -145,7 +146,7 @@ function AppShell() {
               <span className={`role-pill role-${session.role}`}>{session.role === 'admin' ? 'LGU Admin' : session.role === 'merchant' ? 'Merchant' : 'Verified NGO'}</span>
               <span className="header-role-destination">{session.role === 'admin' ? 'Command center' : 'Workspace'}</span>
             </Link>
-            <button className="text-button" onClick={logout}>Sign out</button>
+            <button className="text-button" onClick={requestLogout}>Sign out</button>
           </> : <button className="primary-button compact" onClick={() => setLoginOpen(true)}>Merchant / NGO login</button>}
         </div>
         <div className="mobile-count">
@@ -160,7 +161,7 @@ function AppShell() {
             {session ? <>
               <Link to={session.role === 'admin' ? '/admin' : '/workspace'} onClick={() => setMobileMenuOpen(false)}>{session.role === 'admin' ? 'Admin command center' : session.role === 'merchant' ? 'Merchant workspace' : 'NGO workspace'}</Link>
               <button type="button" onClick={() => { setMobileMenuOpen(false); setImpactOpen(true); }}>My impact</button>
-              <button type="button" onClick={logout}>Sign out</button>
+              <button type="button" onClick={requestLogout}>Sign out</button>
             </> : <>
               <button type="button" onClick={() => { setMobileMenuOpen(false); setImpactOpen(true); }}>My impact</button>
               <button className="primary-button" type="button" onClick={() => { setMobileMenuOpen(false); setLoginOpen(true); }}>Merchant / NGO login</button>
@@ -170,10 +171,13 @@ function AppShell() {
         </div>
       </div>
     </header>
-    {view === 'admin' ? session?.role === 'admin' ? <Suspense fallback={<main className="dashboard-shell"><p className="loading-line">Opening the admin command center…</p></main>}><AdminQueue session={session} onNotice={setNotice} /></Suspense> : <main className="dashboard-shell"><section className="panel"><h1>Admin access required</h1><p className="panel-subtitle">Sign in with an administrator account to open this command center.</p><button className="primary-button" onClick={() => setLoginOpen(true)}>Sign in</button></section></main> : view === 'dashboard' && session ? <Suspense fallback={<main className="dashboard-shell"><p className="loading-line">Opening your partner workspace…</p></main>}><PartnerDashboardPage session={session} onBrowse={() => navigate('/')} onNotice={setNotice} onSavePass={savePass} /></Suspense> : view === 'how' ? <HowItWorksPage /> : view === 'about' ? <AboutPage /> : <MarketplacePage session={session} onClaim={setClaimBatch} onPartnerSignIn={() => setLoginOpen(true)} onNotice={setNotice} refreshTrigger={marketRefresh} />}
+    <div className="app-main flex-1 pb-12">
+      {view === 'admin' ? session?.role === 'admin' ? <Suspense fallback={<main className="dashboard-shell"><p className="loading-line">Opening the admin command center…</p></main>}><AdminQueue session={session} onNotice={setNotice} /></Suspense> : <main className="dashboard-shell"><section className="panel"><h1>Admin access required</h1><p className="panel-subtitle">Sign in with an administrator account to open this command center.</p><button className="primary-button" onClick={() => setLoginOpen(true)}>Sign in</button></section></main> : view === 'dashboard' && session ? <Suspense fallback={<main className="dashboard-shell"><p className="loading-line">Opening your partner workspace…</p></main>}><PartnerDashboardPage session={session} onBrowse={() => navigate('/')} onNotice={setNotice} onSavePass={savePass} /></Suspense> : view === 'how' ? <HowItWorksPage /> : view === 'about' ? <AboutPage /> : <MarketplacePage session={session} onClaim={setClaimBatch} onPartnerSignIn={() => setLoginOpen(true)} onNotice={setNotice} refreshTrigger={marketRefresh} />}
+    </div>
     {savedPass && <button type="button" className="active-pass-fab" onClick={() => setPickupPass(savedPass)}>My Active QR Pass</button>}
     <footer className="site-footer"><span>SalbarKain</span><span>Local surplus food rescue · Find partners near you</span><span className="footer-device">No buyer account required</span></footer>
     {loginOpen && <AuthModal onClose={() => setLoginOpen(false)} onLogin={handleLogin} />}
+    {logoutConfirmOpen && <div className="overlay logout-confirm-overlay" role="presentation" onMouseDown={event => event.target === event.currentTarget && setLogoutConfirmOpen(false)}><section className="dialog logout-confirm-dialog" role="alertdialog" aria-modal="true" aria-labelledby="logout-confirm-title" aria-describedby="logout-confirm-copy"><p className="eyebrow">Account session</p><h2 id="logout-confirm-title">Sign out of SalbarKain?</h2><p id="logout-confirm-copy">You can sign back in anytime to manage your store and pickup queue.</p><div className="logout-confirm-actions"><button type="button" className="secondary-button" onClick={() => setLogoutConfirmOpen(false)}>Stay signed in</button><button type="button" className="primary-button" onClick={logout}>Sign out</button></div></section></div>}
     {impactOpen && <MyImpactModal session={session} onClose={() => setImpactOpen(false)} />}
     {claimBatch && <ClaimDrawer batch={claimBatch} onClose={() => setClaimBatch(null)} onSubmit={submitClaim} />}
     {pickupPass && <QrPassModal pass={pickupPass} onClose={(result) => { setPickupPass(null); if (result?.cancelled) { localStorage.removeItem(PICKUP_PASS_KEY); localStorage.removeItem(LEGACY_PICKUP_PASS_KEY); setSavedPass(null); setMarketRefresh(value => value + 1); setNotice('Pickup cancelled. The portions are back in the marketplace.'); } }} />}

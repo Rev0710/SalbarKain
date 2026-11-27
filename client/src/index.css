@@ -570,6 +570,120 @@ img,video,canvas,iframe,svg { max-width:100%; }
   .evening-empty-actions { align-items:stretch; flex-direction:column; width:100%; }
   .evening-empty-actions > * { justify-content:center; width:100%; }
 }
+
+/* Merchant counter operations */
+.merchant-dashboard { display:flex; flex-direction:column; gap:22px; }
+.merchant-heading { margin-bottom:0; }
+.merchant-heading h1 { margin:4px 0 0; color:#0F172A; font-size:clamp(25px,3vw,34px); line-height:1.15; letter-spacing:-.04em; }
+.merchant-kpis { display:grid; grid-template-columns:repeat(4,minmax(0,1fr)); gap:14px; margin-bottom:0; }
+.merchant-kpi { display:flex; min-width:0; min-height:126px; flex-direction:column; align-items:flex-start; justify-content:center; gap:6px; border:1px solid #E2E8F0; border-radius:8px; padding:17px; background:#FFFFFF; }
+.merchant-kpi > span,.merchant-milestone-title > span { color:#64748B; font-size:12px; font-weight:650; }
+.merchant-kpi > strong { color:#0F172A; font-size:27px; line-height:1.1; font-variant-numeric:tabular-nums; letter-spacing:-.04em; }
+.merchant-kpi > small,.merchant-milestone > small { color:#64748B; font-size:11px; line-height:1.4; }
+.merchant-milestone { justify-content:flex-start; gap:8px; }
+.merchant-milestone-title { display:flex; width:100%; align-items:center; justify-content:space-between; gap:8px; }
+.merchant-milestone-title strong { color:#0F172A; font-size:15px; font-variant-numeric:tabular-nums; }
+.merchant-progress { width:100%; height:6px; overflow:hidden; border-radius:99px; background:#E2E8F0; }
+.merchant-progress span { display:block; height:100%; border-radius:inherit; background:#15803D; transition:width .2s ease; }
+.merchant-certificate { min-height:36px; margin-top:1px; padding-inline:10px; font-size:11px; }
+.merchant-operations-hub { display:grid; gap:13px; }
+.merchant-section-heading,.merchant-queue-heading,.merchant-inventory-heading { display:flex; align-items:center; justify-content:space-between; gap:14px; }
+.merchant-section-heading h2 { margin:3px 0 0; color:#0F172A; font-size:20px; line-height:1.25; letter-spacing:-.025em; }
+.merchant-queue-count { flex:0 0 auto; border:1px solid rgb(21 128 61 / 20%); border-radius:99px; padding:6px 10px; color:#15803D; background:rgb(21 128 61 / 7%); font-size:11px; font-weight:700; }
+.merchant-operations-grid { display:grid; grid-template-columns:minmax(0,.92fr) minmax(0,1.08fr); align-items:stretch; gap:16px; }
+.merchant-scanner-panel,.merchant-queue-panel,.merchant-inventory-panel { min-width:0; margin:0; }
+.merchant-scanner-panel { display:flex; flex-direction:column; gap:14px; border-color:#0F172A; background:#FFFFFF; }
+.merchant-scanner-heading { display:flex; align-items:flex-start; justify-content:space-between; gap:10px; }
+.merchant-scanner-heading h3,.merchant-queue-heading h3 { margin:0; color:#0F172A; font-size:16px; font-weight:700; }
+.merchant-scanner-heading p { margin:4px 0 0; color:#64748B; font-size:12px; }
+.scanner-live-mark { display:inline-flex; flex:0 0 auto; align-items:center; gap:6px; color:#15803D; font-size:11px; font-weight:700; }
+.scanner-live-mark i { width:7px; height:7px; border-radius:50%; background:#15803D; }
+.merchant-scanner-viewfinder { position:relative; display:grid; min-height:220px; place-items:center; overflow:hidden; border:1px solid #334155; border-radius:8px; padding:14px; background:#0F172A; }
+.merchant-scanner-viewfinder .scanner-box { position:relative; z-index:1; width:min(100%,340px); aspect-ratio:1; border:0; border-radius:0; background:transparent; }
+.merchant-scanner-viewfinder .scanner-box video { border-radius:6px; }
+.merchant-scanner-viewfinder #salbarkain-qr-reader__scan_region { min-height:0!important; }
+.merchant-scanner-viewfinder #salbarkain-qr-reader__dashboard { display:none!important; }
+.merchant-scanner-placeholder { position:absolute; inset:0; z-index:0; display:flex; flex-direction:column; align-items:center; justify-content:center; gap:7px; color:#FFFFFF; }
+.merchant-scanner-placeholder > span { color:#15803D; font-size:36px; line-height:1; }
+.merchant-scanner-placeholder strong { font-size:13px; }
+.merchant-scanner-placeholder small { color:#CBD5E1; font-size:11px; }
+.scanner-corner { position:absolute; z-index:2; width:24px; height:24px; border-color:#15803D; border-style:solid; }
+.scanner-corner.top-left { top:10px; left:10px; border-width:2px 0 0 2px; border-radius:5px 0 0; }
+.scanner-corner.top-right { top:10px; right:10px; border-width:2px 2px 0 0; border-radius:0 5px 0 0; }
+.scanner-corner.bottom-left { bottom:10px; left:10px; border-width:0 0 2px 2px; border-radius:0 0 0 5px; }
+.scanner-corner.bottom-right { right:10px; bottom:10px; border-width:0 2px 2px 0; border-radius:0 0 5px; }
+.merchant-camera-toggle { width:100%; min-height:44px; }
+.merchant-manual-verify { display:grid; gap:7px; }
+.merchant-manual-verify > label { color:#334155; font-size:12px; font-weight:700; }
+.merchant-manual-verify > div { display:grid; grid-template-columns:minmax(0,1fr) auto; gap:8px; }
+.merchant-manual-verify .field-input { min-width:0; }
+.merchant-manual-verify .secondary-button { min-height:44px; text-transform:none; }
+.merchant-queue-panel { display:flex; flex-direction:column; gap:12px; }
+.merchant-queue-heading { align-items:flex-start; }
+.merchant-queue-heading .panel-subtitle { margin-bottom:0; }
+.merchant-queue-heading .secondary-button { flex:0 0 auto; }
+.merchant-queue-list { display:grid; gap:0; }
+.merchant-reservation { display:grid; grid-template-columns:minmax(0,1fr) auto; align-items:center; gap:10px 14px; border-top:1px solid #E2E8F0; padding:13px 0; }
+.merchant-reservation-main { display:grid; min-width:0; gap:4px; }
+.merchant-reservation-main strong { overflow:hidden; color:#0F172A; font-size:13px; text-overflow:ellipsis; white-space:nowrap; }
+.merchant-reservation-main span { overflow:hidden; color:#64748B; font-size:12px; text-overflow:ellipsis; white-space:nowrap; }
+.merchant-reservation-meta { display:grid; grid-template-columns:auto auto; align-items:center; justify-items:end; gap:4px 8px; }
+.merchant-countdown { color:#0F172A; font-size:12px; font-weight:750; font-variant-numeric:tabular-nums; }
+.merchant-countdown.urgent { color:#D97706; }
+.merchant-reservation-meta strong { color:#0F172A; font-size:12px; white-space:nowrap; }
+.merchant-reservation-meta small { grid-column:1 / -1; color:#64748B; font-size:10px; }
+.merchant-handoff { grid-column:1 / -1; justify-self:end; min-height:40px; }
+.merchant-queue-empty { display:grid; min-height:160px; align-content:center; justify-items:center; gap:6px; border:1px dashed #CBD5E1; border-radius:7px; padding:18px; text-align:center; }
+.merchant-queue-empty strong { color:#0F172A; font-size:13px; }
+.merchant-queue-empty span { max-width:330px; color:#64748B; font-size:12px; line-height:1.5; }
+.merchant-queue-skeleton { display:grid; gap:12px; }
+.merchant-queue-skeleton i { display:block; height:56px; border-radius:6px; background:#F1F5F9; }
+.merchant-inline-error { display:flex; align-items:center; justify-content:space-between; gap:10px; border:1px solid #FCD34D; border-radius:7px; padding:12px; color:#92400E; background:#FFFBEB; font-size:12px; }
+.merchant-work-grid { display:grid; grid-template-columns:minmax(0,5fr) minmax(0,7fr); align-items:start; gap:16px; }
+.merchant-inventory-heading { align-items:flex-start; flex-direction:column; margin-bottom:14px; }
+.merchant-inventory-heading h2 { margin:0; color:#0F172A; font-size:18px; }
+.merchant-inventory-filters { display:flex; width:100%; gap:7px; }
+.merchant-inventory-filters button { min-height:40px; border:1px solid #E2E8F0; border-radius:99px; padding:0 12px; color:#475569; background:#FFFFFF; font-size:11px; font-weight:650; white-space:nowrap; }
+.merchant-inventory-filters button.active { border-color:#15803D; color:#15803D; background:#F0FDF4; }
+.merchant-inventory-filters button span { margin-left:4px; font-variant-numeric:tabular-nums; }
+.merchant-inventory-row { grid-template-columns:64px minmax(0,1fr) auto; }
+.merchant-inventory-row > .secondary-button { grid-column:3; grid-row:2; }
+.logout-confirm-dialog { width:min(100%,440px); }
+.logout-confirm-dialog h2 { margin:8px 0 0; color:#0F172A; font-size:22px; }
+.logout-confirm-dialog p:not(.eyebrow) { margin:9px 0 0; color:#64748B; font-size:14px; line-height:1.55; }
+.logout-confirm-actions { display:flex; justify-content:flex-end; gap:9px; margin-top:23px; }
+
+/* Let the partner directory grow with its rows instead of trapping mobile scroll. */
+.partner-hub-shell { position:relative!important; top:auto!important; height:auto!important; min-height:0!important; max-height:none!important; overflow:visible!important; }
+.partner-radar-list { flex:0 0 auto; min-height:0; overflow:visible; }
+.app-main { min-width:0; }
+.app-frame { display:flex; flex-direction:column; }
+.site-footer { margin-top:auto; }
+
+@media(max-width:900px) {
+  .merchant-kpis { grid-template-columns:repeat(2,minmax(0,1fr)); }
+  .merchant-operations-grid,.merchant-work-grid { grid-template-columns:minmax(0,1fr); }
+  .merchant-queue-panel { order:0; }
+  .merchant-scanner-panel { order:1; }
+}
+@media(max-width:600px) {
+  .merchant-dashboard { gap:17px; }
+  .merchant-kpis { gap:9px; }
+  .merchant-kpi { min-height:112px; padding:13px; }
+  .merchant-kpi > strong { font-size:23px; }
+  .merchant-section-heading h2 { font-size:18px; }
+  .merchant-section-heading { align-items:flex-start; }
+  .merchant-scanner-panel,.merchant-queue-panel,.merchant-inventory-panel { padding:14px; }
+  .merchant-reservation { grid-template-columns:minmax(0,1fr) auto; }
+  .merchant-inventory-filters { overflow-x:auto; padding-bottom:2px; }
+  .merchant-inventory-row { grid-template-columns:52px minmax(0,1fr); }
+  .merchant-inventory-row > .status-tag { grid-column:2; grid-row:2; }
+  .merchant-inventory-row > .secondary-button { grid-column:2; grid-row:3; width:max-content; }
+  .logout-confirm-actions { flex-direction:column-reverse; }
+  .logout-confirm-actions > button { width:100%; }
+  .partner-hub-shell { height:auto!important; min-height:0!important; max-height:none!important; }
+  .partner-radar-list { overflow:visible; }
+}
 @media(max-width:359px) {
   .partner-store-row { grid-template-columns:36px minmax(0,1fr) auto; gap:7px; }
   .partner-store-visual { width:36px; height:36px; }
