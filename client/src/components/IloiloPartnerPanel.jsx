@@ -1,5 +1,4 @@
 import { useMemo, useState } from 'react';
-import BatchMap from './BatchMap.jsx';
 
 const MUNICIPALITIES = ['All Iloilo', 'Iloilo City', 'Pavia', 'Santa Barbara', 'Oton', 'Leganes'];
 
@@ -63,8 +62,7 @@ function formatTime(value) {
   return Number.isNaN(date.getTime()) ? '' : date.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' });
 }
 
-export default function IloiloPartnerPanel({ partners, fallbackBatches, batches, loading, error, selectedMunicipality, onMunicipalityChange, onSelectBatch }) {
-  const [view, setView] = useState('radar');
+export default function IloiloPartnerPanel({ partners, fallbackBatches, loading, error, selectedMunicipality, onMunicipalityChange }) {
   const directory = useMemo(() => {
     const listed = Array.isArray(partners) ? partners : [];
     const fallback = fromBatches(Array.isArray(fallbackBatches) ? fallbackBatches : []);
@@ -74,20 +72,14 @@ export default function IloiloPartnerPanel({ partners, fallbackBatches, batches,
   }, [partners, fallbackBatches]);
   const filtered = useMemo(() => directory.filter((store) => selectedMunicipality === 'All Iloilo' || canonicalMunicipality(store.municipality) === selectedMunicipality), [directory, selectedMunicipality]);
   const activeBatchesIn = municipality => directory.reduce((total, store) => total + (municipality === 'All Iloilo' || canonicalMunicipality(store.municipality) === municipality ? Math.max(0, Number(store.activeBatchCount) || 0) : 0), 0);
-  const heading = view === 'radar' ? 'Partner storefronts & barangay radar' : 'Live pickup map';
-
   return <aside className="partner-hub-shell" aria-label="Iloilo surplus hubs and pickup radar">
     <div className="partner-hub-header">
-      <div><p className="eyebrow">Iloilo surplus hubs</p><h2>{heading}</h2><p className="partner-hub-subtitle">Verified food partners across Iloilo City and nearby municipalities.</p></div>
-      <div className="partner-view-toggle" role="group" aria-label="Choose partner view">
-        <button type="button" aria-pressed={view === 'radar'} className={view === 'radar' ? 'active' : ''} onClick={() => setView('radar')}>Store Radar</button>
-        <button type="button" aria-pressed={view === 'map'} className={view === 'map' ? 'active' : ''} onClick={() => setView('map')}>Live Map</button>
-      </div>
+      <div><p className="eyebrow">Iloilo surplus hubs</p><h2>Partner storefronts &amp; barangay radar</h2><p className="partner-hub-subtitle">Verified food partners across Iloilo City and nearby municipalities.</p></div>
     </div>
     <div className="partner-municipality-row" role="group" aria-label="Filter partners by municipality">
       {MUNICIPALITIES.map((municipality) => <button key={municipality} type="button" className={`partner-municipality-pill ${selectedMunicipality === municipality ? 'active' : ''}`} aria-pressed={selectedMunicipality === municipality} onClick={() => onMunicipalityChange(municipality)}>{municipality}<span>{activeBatchesIn(municipality)}</span></button>)}
     </div>
-    {view === 'map' ? <BatchMap batches={batches} onSelect={onSelectBatch} /> : <div className="partner-radar-list" aria-live="polite">
+    <div className="partner-radar-list" aria-live="polite">
       {loading && <p className="partner-radar-note" role="status">Loading verified food partners…</p>}
       {error && !directory.length && <p className="partner-radar-note" role="status">Partner locations could not load just now. Try refreshing the marketplace.</p>}
       {!loading && !filtered.length && <div className="partner-radar-empty"><h3>No verified partners in this filter yet</h3><p>Verified local bakeries, eateries, groceries, and shelters will appear here.</p></div>}
@@ -97,7 +89,10 @@ export default function IloiloPartnerPanel({ partners, fallbackBatches, batches,
         const closesAt = store.closesAt ? new Date(store.closesAt) : null;
         const urgent = activeBatchCount > 0 && closesAt && closesAt.getTime() - Date.now() <= 45 * 60 * 1000;
         return <article className="partner-store-row" key={store._id}>
-          {store.storefrontPhotoUrl ? <img className="partner-store-photo" src={store.storefrontPhotoUrl} alt="" loading="lazy" onError={(event) => { event.currentTarget.onerror = null; event.currentTarget.hidden = true; }} /> : <div className="partner-store-mark" aria-hidden="true">{(store.storeName || 'S').trim().charAt(0).toUpperCase()}</div>}
+          <div className="partner-store-visual">
+            {store.storefrontPhotoUrl && <img className="partner-store-photo" src={store.storefrontPhotoUrl} alt="" loading="lazy" onError={(event) => { event.currentTarget.hidden = true; event.currentTarget.nextElementSibling.hidden = false; }} />}
+            <div className="partner-store-mark" aria-hidden="true" hidden={Boolean(store.storefrontPhotoUrl)}>{(store.storeName || 'S').trim().charAt(0).toUpperCase()}</div>
+          </div>
           <div className="partner-store-main">
             <div className="partner-store-name-line"><h3 title={store.storeName}>{store.storeName || 'Verified food partner'}</h3><span className="partner-verified" title="KYB verified">✓ Verified</span></div>
             <p className="partner-store-location">{partnerLocation(store)}</p>
@@ -109,6 +104,6 @@ export default function IloiloPartnerPanel({ partners, fallbackBatches, batches,
         </article>;
       })}
       {!loading && !error && <p className="partner-radar-footnote">Evening drop times are a guide. Check a batch’s pickup cutoff before travelling.</p>}
-    </div>}
+    </div>
   </aside>;
 }

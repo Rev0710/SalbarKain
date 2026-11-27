@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { api } from '../utils/api.js';
 import BatchCard from '../components/BatchCard.jsx';
@@ -17,7 +17,9 @@ function matchesMunicipality(value = '', selected = 'All Iloilo') {
 
 export default function MarketplacePage({ session, onClaim, onPartnerSignIn, onNotice, refreshTrigger = 0 }) {
   const navigate = useNavigate();
-  const [batches, setBatches] = useState([]); const [partners, setPartners] = useState([]); const [partnerError, setPartnerError] = useState(''); const [filter, setFilter] = useState('All'); const [municipality, setMunicipality] = useState('All Iloilo'); const [loading, setLoading] = useState(true); const [partnersLoading, setPartnersLoading] = useState(true); const [error, setError] = useState(''); const [refreshKey, setRefreshKey] = useState(0); const [selected, setSelected] = useState(null);
+  const [batches, setBatches] = useState([]); const [partners, setPartners] = useState([]); const [partnerError, setPartnerError] = useState(''); const [filter, setFilter] = useState('All'); const [municipality, setMunicipality] = useState('All Iloilo'); const [loading, setLoading] = useState(true); const [partnersLoading, setPartnersLoading] = useState(true); const [error, setError] = useState(''); const [isRefreshing, setIsRefreshing] = useState(false); const [pullState, setPullState] = useState('idle'); const [selected, setSelected] = useState(null);
+  const touchStartY = useRef(null);
+  const touchDeltaY = useRef(0);
   const [now, setNow] = useState(Date.now());
   const [offline, setOffline] = useState(() => !navigator.onLine);
   const [origin, setOrigin] = useState(null); const [locationMessage, setLocationMessage] = useState('');
@@ -35,11 +37,67 @@ export default function MarketplacePage({ session, onClaim, onPartnerSignIn, onN
       .catch((err) => { if (err.code !== 'ERR_CANCELED') { setPartnerError(err.response?.data?.message || 'Verified partner locations are temporarily unavailable.'); setPartners([]); } })
       .finally(() => { if (!controller.signal.aborted) setPartnersLoading(false); });
     return () => controller.abort();
-  }, [refreshKey, refreshTrigger]);
+  }, [refreshTrigger]);
   useEffect(() => { navigator.geolocation?.getCurrentPosition(position => setOrigin({ lat: position.coords.latitude, lng: position.coords.longitude }), () => setLocationMessage('Showing recent surplus across all areas. Turn on location to sort by nearby stores.'), { enableHighAccuracy: false, timeout: 8000, maximumAge: 300000 }); }, []);
-  useEffect(() => { const c = new AbortController(); refresh(c.signal, origin); return () => c.abort(); }, [refresh, refreshKey, refreshTrigger, session?.token, origin]);
+  useEffect(() => { const c = new AbortController(); refresh(c.signal, origin); return () => c.abort(); }, [refresh, refreshTrigger, session?.token, origin]);
   useEffect(() => { const online = () => setOffline(false); const offlineEvent = () => setOffline(true); window.addEventListener('online', online); window.addEventListener('offline', offlineEvent); return () => { window.removeEventListener('online', online); window.removeEventListener('offline', offlineEvent); }; }, []);
   useEffect(() => { const timer = window.setInterval(() => setNow(Date.now()), 15_000); return () => window.clearInterval(timer); }, []);
+  const refreshMarketplace = useCallback(async () => {
+    if (isRefreshing) return;
+    const controller = new AbortController();
+    setIsRefreshing(true);
+    setPullState('refreshing');
+    setPartnersLoading(true);
+    setPartnerError('');
+    try {
+      await Promise.all([
+        refresh(controller.signal, origin),
+        api.get('/batches/partners', { signal: controller.signal })
+          .then(({ data }) => setPartners(Array.isArray(data?.data?.partners) ? data.data.partners : []))
+          .catch((err) => {
+            if (err.code !== 'ERR_CANCELED') {
+              setPartnerError(err.response?.data?.message || 'Verified partner locations are temporarily unavailable.');
+              setPartners([]);
+            }
+          })
+          .finally(() => setPartnersLoading(false)),
+      ]);
+    } finally {
+      setIsRefreshing(false);
+      setPullState('idle');
+    }
+  }, [isRefreshing, origin, refresh]);
+
+  function onTouchStart(event) {
+    if (window.scrollY !== 0 || event.touches.length !== 1 || isRefreshing) {
+      touchStartY.current = null;
+      return;
+    }
+    touchStartY.current = event.touches[0].clientY;
+    touchDeltaY.current = 0;
+  }
+
+  function onTouchMove(event) {
+    if (touchStartY.current === null || window.scrollY !== 0 || event.touches.length !== 1) return;
+    const delta = event.touches[0].clientY - touchStartY.current;
+    touchDeltaY.current = Math.max(0, delta);
+    if (delta > 0) setPullState(delta > 75 ? 'ready' : 'pulling');
+    else setPullState('idle');
+  }
+
+  function onTouchEnd() {
+    const shouldRefresh = touchStartY.current !== null && touchDeltaY.current > 75 && window.scrollY === 0;
+    touchStartY.current = null;
+    touchDeltaY.current = 0;
+    if (shouldRefresh) void refreshMarketplace();
+    else if (pullState !== 'refreshing') setPullState('idle');
+  }
+
+  function onTouchCancel() {
+    touchStartY.current = null;
+    touchDeltaY.current = 0;
+    if (!isRefreshing) setPullState('idle');
+  }
   const townBatches = useMemo(() => batches.filter(batch => matchesMunicipality(batch.merchantId?.municipality, municipality)), [batches, municipality]);
   const visible = useMemo(() => townBatches.filter(batch => {
     const flashActive = Boolean(batch.isFlashDropEnabled && new Date(batch.expiresAt).getTime() - now <= 30 * 60 * 1000);
@@ -64,8 +122,11 @@ export default function MarketplacePage({ session, onClaim, onPartnerSignIn, onN
   const [mobileTab, setMobileTab] = useState('list');
   function resetFilters() { setFilter('All'); setMunicipality('All Iloilo'); }
   function postSurplus() { if (session?.role === 'merchant') navigate('/workspace'); else onPartnerSignIn(); }
-  return <main className="market-shell">{offline && <div className="alert-banner mb-4" role="alert">You’re offline. Reconnect to refresh batches and make a pickup reservation.</div>}<div className="market-heading"><div><p className="eyebrow">Local food rescue · Philippines</p><h1>Good food, close by.</h1><p>Discover surplus from nearby food partners wherever you are.</p></div><div className="location-label"><span className="live-dot" /> {origin ? 'Sorted near your location' : 'Recent surplus across all areas'} <button className="text-button" onClick={() => { setOrigin(null); setLocationMessage('Allow location access in your browser to sort by nearest food partners.'); navigator.geolocation?.getCurrentPosition(position => { setOrigin({ lat: position.coords.latitude, lng: position.coords.longitude }); setLocationMessage(''); }, () => {}, { enableHighAccuracy: false, timeout: 8000, maximumAge: 300000 }); }} aria-label="Use my location">Locate me</button><button className="text-button" onClick={() => setRefreshKey(x => x + 1)} aria-label="Refresh batches">↻</button></div></div>{locationMessage && <p className="form-note mb-3">{locationMessage}</p>}
-    <div className="filter-row" role="group" aria-label="Filter food batches">{FILTERS.map(label => <button key={label} className={`filter-pill ${filter === label ? 'active' : ''}`} aria-pressed={filter === label} onClick={() => setFilter(label)}>{label}</button>)}</div>
+  return <main className="market-shell" onTouchStart={onTouchStart} onTouchMove={onTouchMove} onTouchEnd={onTouchEnd} onTouchCancel={onTouchCancel}>
+    {pullState !== 'idle' && <div className="pull-refresh-indicator" role="status" aria-live="polite">{isRefreshing && <span className="market-refresh-icon animate-spin" aria-hidden="true">↻</span>}{isRefreshing ? 'Updating Iloilo listings...' : pullState === 'ready' ? 'Release to refresh live surplus...' : 'Pull down to refresh live surplus...'}</div>}
+    {offline && <div className="alert-banner mb-4" role="alert">You’re offline. Reconnect to refresh batches and make a pickup reservation.</div>}
+    <div className="market-heading"><div><p className="eyebrow">Local food rescue · Philippines</p><h1>Good food, close by.</h1><p>Discover surplus from nearby food partners wherever you are.</p></div><div className="location-label"><span className="live-dot" /> {origin ? 'Sorted near your location' : 'Recent surplus across all areas'} <button className="text-button" onClick={() => { setOrigin(null); setLocationMessage('Allow location access in your browser to sort by nearest food partners.'); navigator.geolocation?.getCurrentPosition(position => { setOrigin({ lat: position.coords.latitude, lng: position.coords.longitude }); setLocationMessage(''); }, () => {}, { enableHighAccuracy: false, timeout: 8000, maximumAge: 300000 }); }} aria-label="Use my location">Locate me</button></div></div>{locationMessage && <p className="form-note mb-3">{locationMessage}</p>}
+    <div className="market-filter-toolbar"><div className="filter-row" role="group" aria-label="Filter food batches">{FILTERS.map(label => <button key={label} className={`filter-pill ${filter === label ? 'active' : ''}`} aria-pressed={filter === label} onClick={() => setFilter(label)}>{label}</button>)}</div><button type="button" className="market-refresh-button" onClick={() => void refreshMarketplace()} disabled={isRefreshing} aria-label={isRefreshing ? 'Updating marketplace' : 'Refresh marketplace'}><span className={`market-refresh-icon ${isRefreshing ? 'animate-spin' : ''}`} aria-hidden="true">↻</span><span>{isRefreshing ? 'Updating' : 'Refresh'}</span></button></div>
     <div className="mobile-market-tabs" role="tablist" aria-label="Marketplace view"><button role="tab" aria-selected={mobileTab === 'map'} className={mobileTab === 'map' ? 'active' : ''} onClick={() => setMobileTab('map')}>Partner hubs</button><button role="tab" aria-selected={mobileTab === 'list'} className={mobileTab === 'list' ? 'active' : ''} onClick={() => setMobileTab('list')}>Batches <span>{visible.length}</span></button></div>
-    <div className="market-grid"><section className={`batch-list ${mobileTab === 'map' ? 'mobile-market-hidden' : ''}`} aria-label="Available surplus batches">{loading && <BatchSkeletons />}{error && <div className="empty-state" role="alert"><h2>Marketplace paused</h2><p>{error}</p><button className="secondary-button mt-4" onClick={() => setRefreshKey(x => x + 1)}>Try again</button></div>}{!loading && !error && visible.length === 0 && <section className="evening-empty-state" aria-labelledby="evening-empty-title"><p className="eyebrow">Iloilo evening rescue schedule</p><h2 id="evening-empty-title">No batches match these filters yet</h2><p>Local bakeries and eateries typically post surplus between <strong>7:00 PM and 9:00 PM</strong>, near closing time.</p><div className="evening-schedule-window"><span>Typical drop window</span><strong>7:00–9:00 PM</strong></div><div className="evening-empty-actions"><button type="button" className="secondary-button" onClick={resetFilters}>Reset filters</button><button type="button" className="text-button" onClick={postSurplus}>Merchant? Post a batch</button></div><button type="button" className="evening-refresh-link" onClick={() => setRefreshKey(x => x + 1)}>Refresh marketplace</button></section>}{visible.map(batch => <div key={batch._id} data-batch={batch._id} className={selected === batch._id ? 'ring-2 ring-forest rounded-lg' : ''}><BatchCard batch={batch} isNgo={session?.role === 'ngo' && (session?.verificationStatus === 'verified' || session?.verified === true)} onClaim={claim} onSignIn={onPartnerSignIn} onReport={report} /></div>)}</section><div className={mobileTab === 'list' ? 'mobile-market-hidden' : ''}><IloiloPartnerPanel partners={partners} fallbackBatches={batches} batches={visible} loading={partnersLoading} error={partnerError} selectedMunicipality={municipality} onMunicipalityChange={setMunicipality} onSelectBatch={selectOnMap} /></div></div></main>;
+    <div className="market-grid"><section className={`batch-list ${mobileTab === 'map' ? 'mobile-market-hidden' : ''}`} aria-label="Available surplus batches">{loading && <BatchSkeletons />}{error && <div className="empty-state" role="alert"><h2>Marketplace paused</h2><p>{error}</p><button className="secondary-button mt-4" onClick={() => void refreshMarketplace()}>Try again</button></div>}{!loading && !error && visible.length === 0 && <section className="evening-empty-state" aria-labelledby="evening-empty-title"><p className="eyebrow">Iloilo evening rescue schedule</p><h2 id="evening-empty-title">No batches match these filters yet</h2><p>Local bakeries and eateries typically post surplus between <strong>7:00 PM and 9:00 PM</strong>, near closing time.</p><div className="evening-schedule-window"><span>Typical drop window</span><strong>7:00–9:00 PM</strong></div><div className="evening-empty-actions"><button type="button" className="secondary-button" onClick={resetFilters}>Reset filters</button><button type="button" className="text-button" onClick={postSurplus}>Merchant? Post a batch</button></div></section>}{visible.map(batch => <div key={batch._id} data-batch={batch._id} className={selected === batch._id ? 'ring-2 ring-forest rounded-lg' : ''}><BatchCard batch={batch} isNgo={session?.role === 'ngo' && (session?.verificationStatus === 'verified' || session?.verified === true)} onClaim={claim} onSignIn={onPartnerSignIn} onReport={report} /></div>)}</section><div className={mobileTab === 'list' ? 'mobile-market-hidden' : ''}><IloiloPartnerPanel partners={partners} fallbackBatches={batches} loading={partnersLoading} error={partnerError} selectedMunicipality={municipality} onMunicipalityChange={setMunicipality} /></div></div></main>;
 }
