@@ -16,7 +16,7 @@ function cleanProfilePart(value) {
 
 function uploadStorefront(buffer) {
   return new Promise((resolve, reject) => cloudinary.uploader.upload_stream(
-    { folder: 'salbar-kain/storefronts', resource_type: 'image', allowed_formats: ['jpg', 'jpeg', 'png', 'webp'] },
+    { folder: 'salbarkain/storefronts', resource_type: 'image', allowed_formats: ['jpg', 'jpeg', 'png', 'webp'] },
     (error, result) => {
       if (error) {
         console.error('Storefront upload failed:', { httpCode: Number(error.http_code) || undefined });
@@ -30,7 +30,8 @@ function uploadStorefront(buffer) {
 function profileFields(user) {
   return {
     id: user._id.toString(), role: user.role, name: user.name, email: user.email,
-    storeName: user.storeName, category: user.category, address: cleanProfilePart(user.address),
+    storeName: user.storeName, organizationName: user.role === 'merchant' ? user.storeName : user.organizationName,
+    category: user.category, address: cleanProfilePart(user.address),
     barangay: cleanProfilePart(user.barangay), municipality: cleanProfilePart(user.municipality) || 'Iloilo Province',
     location: user.location, storefrontPhotoUrl: user.storefrontPhotoUrl || '',
     contactNumber: user.contactNumber || user.phone || '',
@@ -62,6 +63,17 @@ async function updateMerchantProfile(req, res) {
   if (!user) throw httpError(404, 'MERCHANT_NOT_FOUND', 'Merchant account was not found.');
 
   const update = {};
+  const requestedStoreName = req.body.storeName ?? req.body.organizationName;
+  if (requestedStoreName !== undefined) {
+    if (typeof requestedStoreName !== 'string' || requestedStoreName.trim().length < 2 || requestedStoreName.trim().length > 120) {
+      throw httpError(400, 'INVALID_STORE_NAME', 'Store name must be between 2 and 120 characters.');
+    }
+    update.storeName = requestedStoreName.trim();
+  }
+  if (req.body.category !== undefined) {
+    if (!['bakery', 'eatery', 'grocery', 'other'].includes(req.body.category)) throw httpError(400, 'INVALID_CATEGORY', 'Choose a valid business category.');
+    update.category = req.body.category;
+  }
   if (req.body.contactNumber !== undefined) {
     if (typeof req.body.contactNumber !== 'string' || req.body.contactNumber.trim().length > 24) throw httpError(400, 'INVALID_CONTACT_NUMBER', 'Enter a contact number up to 24 characters.');
     update.contactNumber = req.body.contactNumber.trim();
@@ -106,7 +118,14 @@ async function updateMerchantProfile(req, res) {
   const refreshed = await User.findById(user._id).select('+verificationDocPublicId +verificationDocFormat').populate('verifiedBy', 'name assignedMunicipality').lean();
   let profile;
   try { profile = profileFields(refreshed); } catch { throw httpError(503, 'DOCUMENT_UNAVAILABLE', 'The permit link could not be created right now.'); }
-  res.set('Cache-Control', 'no-store').json({ success: true, data: { profile } });
+  const sessionUser = {
+    id: profile.id, role: profile.role, name: profile.name, email: profile.email,
+    storeName: profile.storeName, organizationName: profile.organizationName,
+    category: profile.category, storefrontPhotoUrl: profile.storefrontPhotoUrl,
+    address: profile.address, barangay: profile.barangay, municipality: profile.municipality,
+    verificationStatus: profile.verificationStatus,
+  };
+  res.set('Cache-Control', 'no-store').json({ success: true, data: { profile, user: sessionUser } });
 }
 
 async function merchantRecognition(req, res) {

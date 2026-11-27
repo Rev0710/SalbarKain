@@ -91,8 +91,53 @@ function downloadCertificate(storeName, completedRescues) {
   pdf.save('salbarkain-zero-waste-partner.pdf');
 }
 
-function StoreProfilePanel({ profile, onSaved, completedRescues, onLogoPreviewChange }) {
-  const [form, setForm] = useState({ contactNumber: '', defaultClosingTime: '20:30', pickupInstructions: '', defaultAllergens: ['None / Allergen-Free'] });
+function StorefrontIcon() {
+  return <svg aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" className="storefront-placeholder-icon"><path d="M3 10.5 5 4h14l2 6.5"/><path d="M4 10v10h16V10M3 10.5a3 3 0 0 0 5 2.2 3 3 0 0 0 4 0 3 3 0 0 0 4 0 3 3 0 0 0 5-2.2M9 20v-5h6v5"/></svg>;
+}
+
+function AccountSecurityCard({ email }) {
+  const [code, setCode] = useState('');
+  const [newPassword, setNewPassword] = useState('');
+  const [codeSent, setCodeSent] = useState(false);
+  const [sending, setSending] = useState(false);
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState('');
+  const [notice, setNotice] = useState('');
+
+  async function sendCode() {
+    setSending(true); setError(''); setNotice('');
+    try {
+      const { data } = await api.post('/auth/request-password-code');
+      setCodeSent(true);
+      setNotice(data?.message || 'A verification code was sent to your registered email.');
+    } catch (err) { setError(err.response?.data?.message || 'Could not send the verification code. Please try again.'); }
+    finally { setSending(false); }
+  }
+
+  async function updatePassword(event) {
+    event.preventDefault(); setSaving(true); setError(''); setNotice('');
+    try {
+      const { data } = await api.patch('/auth/confirm-password-change', { code: code.trim(), newPassword });
+      setNotice(data?.message || 'Password updated securely.');
+      setCode(''); setNewPassword(''); setCodeSent(false);
+    } catch (err) { setError(err.response?.data?.message || 'Password could not be updated. Request a new code and try again.'); }
+    finally { setSaving(false); }
+  }
+
+  return <section className="panel account-security-card" aria-labelledby="account-security-title">
+    <div><p className="eyebrow">Account protection</p><h3 id="account-security-title">Account Security &amp; Password</h3><p className="panel-subtitle">Change your password after confirming a one-time code sent to your registered email.</p></div>
+    <div className="security-email-row"><span><small>Registered email</small><strong>{email || 'Email unavailable'}</strong></span><button type="button" className="secondary-button" onClick={sendCode} disabled={sending || !email}>{sending ? 'Sending…' : codeSent ? 'Send another code' : 'Send Verification Code'}</button></div>
+    {codeSent && <form className="form-stack security-password-form" onSubmit={updatePassword}>
+      <label className="field-label">6-Digit Email Verification Code<input className="field-input security-code-input" type="text" inputMode="numeric" autoComplete="one-time-code" pattern="[0-9]{6}" maxLength="6" required value={code} onChange={event => setCode(event.target.value.replace(/\D/g, '').slice(0, 6))} placeholder="000000" /></label>
+      <label className="field-label">New Password<input className="field-input" type="password" autoComplete="new-password" minLength="8" maxLength="72" required value={newPassword} onChange={event => setNewPassword(event.target.value)} placeholder="At least 8 characters" /></label>
+      <button type="submit" className="primary-button" disabled={saving || code.length !== 6 || newPassword.length < 8}>{saving ? 'Updating…' : 'Confirm & Update Password'}</button>
+    </form>}
+    {error && <p className="form-error" role="alert">{error}</p>}{notice && <p className="verified-badge" role="status">{notice}</p>}
+  </section>;
+}
+
+function StoreProfilePanel({ profile, onSaved, onSessionUpdate, completedRescues, onLogoPreviewChange }) {
+  const [form, setForm] = useState({ storeName: '', category: 'bakery', contactNumber: '', defaultClosingTime: '20:30', pickupInstructions: '', defaultAllergens: ['None / Allergen-Free'] });
   const [photo, setPhoto] = useState(null);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState('');
@@ -101,7 +146,7 @@ function StoreProfilePanel({ profile, onSaved, completedRescues, onLogoPreviewCh
 
   useEffect(() => {
     if (!profile) return;
-    setForm({ contactNumber: profile.contactNumber || '', defaultClosingTime: profile.defaultClosingTime || '20:30', pickupInstructions: profile.pickupInstructions || '', defaultAllergens: profile.defaultAllergens?.length ? profile.defaultAllergens : ['None / Allergen-Free'] });
+    setForm({ storeName: profile.storeName || profile.organizationName || '', category: profile.category || 'bakery', contactNumber: profile.contactNumber || '', defaultClosingTime: profile.defaultClosingTime || '20:30', pickupInstructions: profile.pickupInstructions || '', defaultAllergens: profile.defaultAllergens?.length ? profile.defaultAllergens : ['None / Allergen-Free'] });
   }, [profile]);
   useEffect(() => {
     if (!photo) { setPhotoPreview(''); onLogoPreviewChange?.(''); return undefined; }
@@ -120,6 +165,8 @@ function StoreProfilePanel({ profile, onSaved, completedRescues, onLogoPreviewCh
   async function save(event) {
     event.preventDefault(); setSaving(true); setError(''); setNotice('');
     const body = new FormData();
+    body.append('storeName', form.storeName.trim());
+    body.append('category', form.category);
     body.append('contactNumber', form.contactNumber);
     body.append('defaultClosingTime', form.defaultClosingTime);
     body.append('pickupInstructions', form.pickupInstructions);
@@ -127,7 +174,9 @@ function StoreProfilePanel({ profile, onSaved, completedRescues, onLogoPreviewCh
     if (photo) body.append('storefrontPhoto', photo);
     try {
       const { data } = await api.patch('/merchants/profile', body, { headers: { 'Content-Type': 'multipart/form-data' } });
-      onSaved(data?.data?.profile);
+      const updatedProfile = data?.data?.profile || data?.data?.user;
+      onSaved(updatedProfile);
+      onSessionUpdate?.(data?.data?.user || updatedProfile);
       setPhoto(null);
       setNotice('Store profile saved. New batch forms will use these defaults.');
     } catch (err) { setError(err.response?.data?.message || 'Store profile could not be saved.'); }
@@ -139,10 +188,12 @@ function StoreProfilePanel({ profile, onSaved, completedRescues, onLogoPreviewCh
   return <section className="panel merchant-profile-panel" aria-labelledby="merchant-profile-title">
     <div className="merchant-profile-heading"><div><p className="eyebrow">Store settings</p><h2 id="merchant-profile-title">Store Profile</h2><p className="panel-subtitle">Keep your pickup details current. Buyers see the contact and handoff instructions on their pass.</p></div><span className={`merchant-profile-status ${verified ? 'verified' : 'pending'}`}>{verified ? `Verified by ${verifyingOffice}` : 'Pending LGU review'}</span></div>
     <div className="merchant-profile-identity">
-      <div className="merchant-profile-photo">{(photoPreview || profile?.storefrontPhotoUrl) ? <img src={photoPreview || profile.storefrontPhotoUrl} alt={`${profile?.storeName || 'Store'} storefront`} onError={event => { event.currentTarget.hidden = true; }} /> : <span>{(profile?.storeName || 'S').charAt(0).toUpperCase()}</span>}</div>
+      <div className="merchant-profile-photo">{(photoPreview || profile?.storefrontPhotoUrl) ? <img src={photoPreview || profile.storefrontPhotoUrl} alt={profile?.organizationName || profile?.storeName || 'Store'} onError={event => { event.currentTarget.hidden = true; event.currentTarget.nextElementSibling.hidden = false; }} /> : null}<span className="storefront-icon-fallback" hidden={Boolean(photoPreview || profile?.storefrontPhotoUrl)}><StorefrontIcon /></span></div>
       <div className="merchant-profile-facts"><h3>{profile?.storeName || 'Your store'}</h3><p>{({ bakery: 'Bakery', eatery: 'Carinderia / Eatery', grocery: 'Minimart / Grocery', other: 'Other food partner' })[profile?.category] || 'Food partner'}</p><p>{[profile?.barangay, profile?.municipality, 'Iloilo'].filter(Boolean).join(', ')}</p>{profile?.address && <p>{profile.address}</p>}{profile?.verificationDocUrl && <a href={profile.verificationDocUrl} target="_blank" rel="noreferrer">View uploaded business permit ↗</a>}</div>
     </div>
     <form className="form-stack merchant-profile-form" onSubmit={save}>
+      <label className="field-label">Store name<input className="field-input" type="text" minLength="2" maxLength="120" required value={form.storeName} onChange={event => setForm(current => ({ ...current, storeName: event.target.value }))} /></label>
+      <label className="field-label">Business category<select className="field-input" required value={form.category} onChange={event => setForm(current => ({ ...current, category: event.target.value }))}><option value="bakery">Bakery</option><option value="eatery">Carinderia / Eatery</option><option value="grocery">Minimart / Grocery</option><option value="other">Other food partner</option></select></label>
       <label className="field-label">Storefront photo<input className="field-input" type="file" accept="image/jpeg,image/png,image/webp" onChange={event => setPhoto(event.target.files?.[0] || null)} /><span className="form-note">JPG, PNG or WebP · up to 5 MB</span></label>
       <div className="field-row"><label className="field-label">Store contact number<input className="field-input" type="tel" maxLength="24" value={form.contactNumber} onChange={event => setForm(current => ({ ...current, contactNumber: event.target.value }))} placeholder="09XX XXX XXXX" /></label><label className="field-label">Typical closing time<input className="field-input" type="time" required value={form.defaultClosingTime} onChange={event => setForm(current => ({ ...current, defaultClosingTime: event.target.value }))} /></label></div>
       <label className="field-label">Pickup counter instructions<textarea className="field-input" rows="3" maxLength="240" value={form.pickupInstructions} onChange={event => setForm(current => ({ ...current, pickupInstructions: event.target.value }))} placeholder="e.g. Ask for the SalbarKain counter near the bread display" /></label>
@@ -150,11 +201,12 @@ function StoreProfilePanel({ profile, onSaved, completedRescues, onLogoPreviewCh
       {error && <p className="form-error" role="alert">{error}</p>}{notice && <p className="verified-badge" role="status">{notice}</p>}
       <button className="primary-button" disabled={saving}>{saving ? 'Saving profile…' : 'Save store settings'}</button>
     </form>
+    <AccountSecurityCard email={profile?.email} />
     <div className="merchant-profile-recognition"><div><strong>Zero-Waste Partner</strong><span>{completedRescues}/50 rescues · {completedRescues >= 50 ? 'Certificate unlocked' : `${Math.max(0, 50 - completedRescues)} to go`}</span></div><div className="merchant-progress" role="progressbar" aria-label="Zero-Waste Partner milestone progress" aria-valuemin="0" aria-valuemax="50" aria-valuenow={Math.min(50, completedRescues)}><span style={{ width: `${Math.min(100, completedRescues / 50 * 100)}%` }} /></div>{completedRescues >= 50 && <button type="button" className="secondary-button" onClick={() => downloadCertificate(profile?.storeName, completedRescues)}>Download Zero-Waste Storefront Certificate (PDF)</button>}</div>
   </section>;
 }
 
-export default function MerchantDashboard({ session, onBrowse, onNotice }) {
+export default function MerchantDashboard({ session, onBrowse, onNotice, onSessionUpdate }) {
   const [batches, setBatches] = useState([]);
   const [restockBatch, setRestockBatch] = useState(null);
   const [previewUrl, setPreviewUrl] = useState('');
@@ -290,7 +342,7 @@ export default function MerchantDashboard({ session, onBrowse, onNotice }) {
 
   return <main className="dashboard-shell merchant-dashboard">
     <header className="dashboard-heading merchant-heading">
-      <div className="merchant-heading-identity"><div className="merchant-heading-logo">{(logoPreview || profile?.storefrontPhotoUrl) ? <><img src={logoPreview || profile.storefrontPhotoUrl} alt={profile?.storeName || session.storeName || 'Store'} onError={event => { event.currentTarget.hidden = true; event.currentTarget.nextElementSibling.hidden = false; }} /><span hidden>{(profile?.storeName || session.storeName || 'S').trim().charAt(0).toUpperCase()}</span></> : <span>{(profile?.storeName || session.storeName || 'S').trim().charAt(0).toUpperCase()}</span>}</div><div><p className="eyebrow">Merchant operations</p><h1>{profile?.storeName || session.storeName || 'Your store'}</h1><p>Today’s rescue activity, pickup counter, and surplus inventory.</p></div></div>
+      <div className="merchant-heading-identity"><div className="merchant-heading-logo">{(logoPreview || profile?.storefrontPhotoUrl) ? <><img src={logoPreview || profile.storefrontPhotoUrl} alt={profile?.organizationName || profile?.storeName || session.storeName || 'Store'} onError={event => { event.currentTarget.hidden = true; event.currentTarget.nextElementSibling.hidden = false; }} /><span className="storefront-icon-fallback" hidden><StorefrontIcon /></span></> : <span className="storefront-icon-fallback"><StorefrontIcon /></span>}</div><div><p className="eyebrow">Merchant operations</p><h1>{profile?.storeName || session.storeName || 'Your store'}</h1><p>Today’s rescue activity, pickup counter, and surplus inventory.</p></div></div>
       <button className="secondary-button" onClick={onBrowse}>View marketplace</button>
     </header>
 
@@ -302,7 +354,7 @@ export default function MerchantDashboard({ session, onBrowse, onNotice }) {
 
     {dashboardTab === 'profile' ? <>
       {profileError && <div className="alert-banner" role="alert">{profileError} <button type="button" className="text-button" onClick={() => api.get('/merchants/profile').then(({ data }) => { setProfile(data?.data?.profile || null); setProfileError(''); }).catch(err => setProfileError(err.response?.data?.message || 'Store profile could not load.'))}>Try again</button></div>}
-      <StoreProfilePanel profile={profile} onSaved={setProfile} completedRescues={completedRescues} onLogoPreviewChange={setLogoPreview} />
+      <StoreProfilePanel profile={profile} onSaved={setProfile} onSessionUpdate={onSessionUpdate} completedRescues={completedRescues} onLogoPreviewChange={setLogoPreview} />
     </> : dashboardTab === 'reviews' ? <section className="panel merchant-customer-reviews" aria-labelledby="merchant-reviews-title">
       <div className="merchant-queue-heading"><div><p className="eyebrow">Verified pickups only</p><h2 id="merchant-reviews-title">Customer reviews</h2><p className="panel-subtitle">Feedback from buyers whose pickup was confirmed at your counter.</p></div><button type="button" className="secondary-button compact" onClick={() => void reloadReviews()}>Refresh</button></div>
       <div className="merchant-reviews-summary"><strong>★ {reviewsData.averageRating.toFixed(1)}</strong><span>average from {reviewsData.totalReviews} {reviewsData.totalReviews === 1 ? 'review' : 'reviews'}</span></div>

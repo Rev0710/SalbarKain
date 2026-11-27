@@ -1,4 +1,6 @@
 const bcrypt = require('bcryptjs');
+const nodemailer = require('nodemailer');
+const { randomInt } = require('crypto');
 const User = require('../models/User');
 const httpError = require('../utils/httpError');
 const { signAccessToken, assertJwtConfigured } = require('../utils/jwt');
@@ -176,4 +178,67 @@ async function login(req, res) {
   res.status(200).json({ success: true, data: { user: publicUser(user), token } });
 }
 
-module.exports = { register, login, submitVerificationUpdate };
+async function requestPasswordCode(req, res) {
+  const user = await User.findOne({ _id: req.user.id, role: 'merchant' });
+  if (!user) throw httpError(404, 'ACCOUNT_NOT_FOUND', 'Merchant account was not found.');
+
+  const smtpUser = process.env.SMTP_USER?.trim();
+  const smtpPass = process.env.SMTP_PASS?.trim();
+  if (smtpUser && !smtpPass) throw httpError(503, 'SMTP_NOT_CONFIGURED', 'Email delivery is not configured. Set SMTP_PASS on the server and try again.');
+  const code = String(randomInt(100000, 1000000));
+  user.passwordResetCodeHash = await bcrypt.hash(code, 12);
+  user.passwordResetExpires = new Date(Date.now() + 10 * 60 * 1000);
+  await user.save();
+
+  if (!smtpUser) {
+    console.info(`[DEV EMAIL CODE for ${user.email}]: ${code}`);
+    return res.status(200).json({ success: true, message: 'Verification code created. Check the server console in development, or your email if SMTP is configured.' });
+  }
+
+  const transporter = nodemailer.createTransport({
+    host: process.env.SMTP_HOST || 'smtp.gmail.com',
+    port: Number(process.env.SMTP_PORT) || 587,
+    secure: String(process.env.SMTP_SECURE || '').toLowerCase() === 'true',
+    auth: { user: smtpUser, pass: smtpPass },
+  });
+  try {
+    await transporter.sendMail({
+      from: process.env.SMTP_FROM?.trim() || smtpUser,
+      to: user.email,
+      subject: 'SalbarKain password change verification code',
+      text: `Your SalbarKain password change code is ${code}. It expires in 10 minutes. If you did not request this, ignore this message.`,
+    });
+  } catch (error) {
+    user.passwordResetCodeHash = null;
+    user.passwordResetExpires = null;
+    await user.save();
+    console.error('Password verification email failed:', { code: error.code || 'SMTP_SEND_FAILED' });
+    throw httpError(503, 'EMAIL_DELIVERY_FAILED', 'The verification email could not be sent. Check your SMTP settings and try again.');
+  }
+  res.status(200).json({ success: true, message: 'A 6-digit verification code was sent to your registered email.' });
+}
+
+async function confirmPasswordChange(req, res) {
+  const { code, newPassword } = req.body || {};
+  if (typeof code !== 'string' || !/^\d{6}$/.test(code.trim())) throw httpError(400, 'INVALID_VERIFICATION_CODE', 'Enter the 6-digit code from your email.');
+  if (typeof newPassword !== 'string' || newPassword.length < 8 || Buffer.byteLength(newPassword, 'utf8') > PASSWORD_MAX_LENGTH) {
+    throw httpError(400, 'INVALID_PASSWORD', `New password must be at least 8 characters and no more than ${PASSWORD_MAX_LENGTH} UTF-8 bytes.`);
+  }
+
+  const user = await User.findOne({ _id: req.user.id, role: 'merchant' })
+    .select('+passwordHash +passwordResetCodeHash +passwordResetExpires');
+  if (!user) throw httpError(404, 'ACCOUNT_NOT_FOUND', 'Merchant account was not found.');
+  if (!user.passwordResetCodeHash || !user.passwordResetExpires || user.passwordResetExpires <= new Date()) {
+    throw httpError(410, 'VERIFICATION_CODE_EXPIRED', 'The verification code has expired. Request a new code.');
+  }
+  if (!(await bcrypt.compare(code.trim(), user.passwordResetCodeHash))) throw httpError(400, 'INVALID_VERIFICATION_CODE', 'That verification code is incorrect.');
+
+  user.passwordHash = await bcrypt.hash(newPassword, 12);
+  user.passwordResetCodeHash = null;
+  user.passwordResetExpires = null;
+  await user.save();
+  await recordAuthEvent(req, 'password_change_success', { email: user.email, userId: user._id });
+  res.status(200).json({ success: true, message: 'Password updated securely.' });
+}
+
+module.exports = { register, login, submitVerificationUpdate, requestPasswordCode, confirmPasswordChange };
