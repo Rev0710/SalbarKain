@@ -1,20 +1,11 @@
 import { useEffect, useRef, useState } from 'react';
 import { TileLayer } from 'react-leaflet';
 
-// Public OSM-derived raster providers, tried in order. Each is a best-effort
-// community service; fallback prevents one provider outage from blanking maps.
+// The standard keyless OpenStreetMap tile service is used for the live layer.
 const TILE_PROVIDERS = [
   {
-    url: 'https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png',
+    url: 'https://tile.openstreetmap.org/{z}/{x}/{y}.png',
     attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors',
-  },
-  {
-    url: 'https://{s}.tile.openstreetmap.fr/osmfr/{z}/{x}/{y}.png',
-    attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors · tiles &copy; <a href="https://www.openstreetmap.fr/">OpenStreetMap France</a>',
-  },
-  {
-    url: 'https://{s}.tile.openstreetmap.fr/hot/{z}/{x}/{y}.png',
-    attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors · style &copy; <a href="https://www.hotosm.org/">Humanitarian OpenStreetMap Team</a>',
   },
 ];
 
@@ -66,5 +57,5 @@ export default function ReliableTileLayer({ onStatus, retryKey = 0 }) {
     },
   };
 
-  return <TileLayer key={`${providerIndex}-${retryKey}`} url={activeProvider.url} attribution={activeProvider.attribution} subdomains={['a', 'b', 'c']} eventHandlers={eventHandlers} />;
+  return <TileLayer key={`${providerIndex}-${retryKey}`} url={activeProvider.url} attribution={activeProvider.attribution} eventHandlers={eventHandlers} />;
 }

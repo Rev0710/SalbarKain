@@ -250,6 +250,61 @@ async function listBatches(req, res) {
   res.set('Cache-Control', 'no-store').status(200).json({ success: true, data: { batches: visible } });
 }
 
+async function listVerifiedPartners(_req, res) {
+  const cacheKey = `${BATCH_CACHE_PREFIX}partners`;
+  let partners = batchCache.get(cacheKey);
+  if (!partners) {
+    const stores = await User.find({
+      role: 'merchant',
+      $or: [{ verificationStatus: 'verified' }, { verified: true }],
+    })
+      .select('_id storeName category address barangay municipality location storefrontPhotoUrl')
+      .sort({ municipality: 1, barangay: 1, storeName: 1 })
+      .lean();
+
+    const merchantIds = stores.map((store) => store._id);
+    const summaries = merchantIds.length ? await Batch.aggregate([
+      {
+        $match: {
+          merchantId: { $in: merchantIds },
+          status: 'active',
+          remainingQty: { $gt: 0 },
+          expiresAt: { $gt: new Date() },
+          safeUntil: { $gt: new Date() },
+        },
+      },
+      {
+        $group: {
+          _id: '$merchantId',
+          activeBatchCount: { $sum: 1 },
+          activePackCount: { $sum: '$remainingQty' },
+          closesAt: { $min: '$expiresAt' },
+        },
+      },
+    ]) : [];
+    const byMerchant = new Map(summaries.map((entry) => [entry._id.toString(), entry]));
+    partners = stores.map((store) => {
+      const summary = byMerchant.get(store._id.toString());
+      return {
+        _id: store._id,
+        storeName: store.storeName,
+        category: store.category,
+        address: store.address,
+        barangay: store.barangay,
+        municipality: store.municipality,
+        location: store.location,
+        storefrontPhotoUrl: store.storefrontPhotoUrl || '',
+        verificationStatus: 'verified',
+        activeBatchCount: summary?.activeBatchCount || 0,
+        activePackCount: summary?.activePackCount || 0,
+        closesAt: summary?.closesAt || null,
+      };
+    });
+    batchCache.set(cacheKey, partners);
+  }
+  res.set('Cache-Control', 'no-store').status(200).json({ success: true, data: { partners } });
+}
+
 async function listMyBatches(req, res) {
   const batches = (await Batch.find({ merchantId: req.user.id })
     .sort({ createdAt: -1 })
@@ -295,4 +350,4 @@ async function reportBatch(req, res) {
   res.status(200).json({ success: true, data: { reportCount: batch.reportCount, spoilageReportCount: batch.spoilageReportCount, reason, hidden: batch.status === 'flagged' } });
 }
 
-module.exports = { createBatch, listBatches, listMyBatches, listMyHistory, reportBatch };
+module.exports = { createBatch, listBatches, listVerifiedPartners, listMyBatches, listMyHistory, reportBatch };
