@@ -1,8 +1,7 @@
 import { Component, useCallback, useEffect, useMemo, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { CircleMarker, MapContainer, Popup, useMap } from 'react-leaflet';
+import { CircleMarker, MapContainer, Marker, Popup, useMap } from 'react-leaflet';
 import L from 'leaflet';
-import 'leaflet.heat';
 import 'leaflet/dist/leaflet.css';
 import { api } from '../utils/api.js';
 import { ILOILO_CENTER, ILOILO_MAP_OPTIONS, isWithinIloilo } from '../utils/iloiloMap.js';
@@ -27,30 +26,52 @@ function responseData(response) { return asObject(asObject(response?.data).data)
 function isAuthError(error) { return [401, 403].includes(error?.response?.status); }
 function isWakeError(error) { return !error?.response || [502, 503, 504].includes(error.response.status); }
 
-function HeatLayer({ features }) {
-  const map = useMap();
-  useEffect(() => {
-    const points = asArray(features).flatMap(feature => {
-      const coordinates = asArray(feature?.geometry?.coordinates);
-      const lng = Number(coordinates[0]); const lat = Number(coordinates[1]);
-      const weight = Number(feature?.properties?.weight || 1);
-      return isWithinIloilo(lat, lng) ? [[lat, lng, Math.max(0.1, Math.min(1, Number.isFinite(weight) ? weight / 50 : 0.1))]] : [];
-    });
-    if (!points.length) return undefined;
-    const layer = L.heatLayer(points, { radius: 36, blur: 24, maxZoom: 16, gradient: { 0.15: '#F8FAFC', 0.55: '#D97706', 1: '#15803D' } }).addTo(map);
-    return () => { if (map.hasLayer(layer)) map.removeLayer(layer); };
-  }, [features, map]);
-  return null;
-}
-
 function MapPins({ features }) {
   return asArray(features).map((feature, index) => {
     const coordinates = asArray(feature?.geometry?.coordinates);
     const lng = Number(coordinates[0]); const lat = Number(coordinates[1]);
     if (!isWithinIloilo(lat, lng)) return null;
     const info = asObject(feature?.properties);
-    return <CircleMarker key={`${asText(info.storeName, 'partner')}-${index}`} center={[lat, lng]} radius={6} pathOptions={{ color: '#FFFFFF', weight: 2, fillColor: '#15803D', fillOpacity: 1 }}><Popup>{asText(info.storeName, 'Food partner')} · {asText(info.barangay, '')}, {asText(info.municipality, '')}</Popup></CircleMarker>;
+    const icon = L.divIcon({ className: 'iloilo-map-pin-wrap', html: '<span class="iloilo-map-pin" aria-hidden="true"><svg viewBox="0 0 28 36"><path d="M14 1C6.82 1 1 6.82 1 14c0 9.25 13 21 13 21s13-11.75 13-21C27 6.82 21.18 1 14 1Z"/><circle cx="14" cy="14" r="5"/></svg></span>', iconSize: [30, 40], iconAnchor: [15, 38], popupAnchor: [0, -35] });
+    return <Marker key={`${asText(info.storeName, 'partner')}-${index}`} position={[lat, lng]} icon={icon}><Popup>{asText(info.storeName, 'Food partner')} · {asText(info.barangay, '')}, {asText(info.municipality, '')}</Popup></Marker>;
   });
+}
+
+function HotspotCircles({ features }) {
+  return asArray(features).map((feature, index) => {
+    const coordinates = asArray(feature?.geometry?.coordinates);
+    const lng = Number(coordinates[0]); const lat = Number(coordinates[1]);
+    if (!isWithinIloilo(lat, lng)) return null;
+    const weight = Math.max(1, Number(feature?.properties?.weight) || 1);
+    return <CircleMarker key={`hotspot-${index}`} center={[lat, lng]} radius={Math.min(15, 5 + Math.sqrt(weight))} pathOptions={{ color: '#D97706', weight: 1.5, fillColor: '#D97706', fillOpacity: 0.22 }} interactive={false} />;
+  });
+}
+
+function RefreshOverviewMap() {
+  const map = useMap();
+  useEffect(() => {
+    let frame;
+    const refresh = () => {
+      window.cancelAnimationFrame(frame);
+      frame = window.requestAnimationFrame(() => map.invalidateSize({ pan: false }));
+    };
+    const observer = typeof ResizeObserver === 'undefined' ? null : new ResizeObserver(refresh);
+    observer?.observe(map.getContainer());
+    window.addEventListener('resize', refresh);
+    refresh();
+    return () => { window.cancelAnimationFrame(frame); observer?.disconnect(); window.removeEventListener('resize', refresh); };
+  }, [map]);
+  return null;
+}
+
+function FocusMapArea({ area }) {
+  const map = useMap();
+  useEffect(() => {
+    if (Array.isArray(area?.coordinates) && area.coordinates.length === 2 && area.coordinates.every(Number.isFinite)) {
+      map.flyTo(area.coordinates, 14, { duration: 0.45 });
+    }
+  }, [area, map]);
+  return null;
 }
 
 function formatNumber(value, digits = 0) {
@@ -63,7 +84,7 @@ class AdminMapBoundary extends Component {
   static getDerivedStateFromError() { return { failed: true }; }
   componentDidCatch(error) { console.error('Admin heatmap failed:', error?.message || 'Unknown map error'); }
   render() {
-    if (this.state.failed) return <div className="empty-state admin-map-empty" role="status"><h3>Map temporarily unavailable</h3><p>The rest of the admin workspace is still available. Refresh to try the map again.</p></div>;
+    if (this.state.failed) return this.props.fallback || <div className="empty-state admin-map-empty" role="status"><h3>Iloilo map is unavailable</h3><p>The Barangay Grid is still available for this overview.</p></div>;
     return this.props.children;
   }
 }
@@ -137,9 +158,13 @@ function VerificationDialog({ user, documentUrl, rejectionReason, setRejectionRe
 export default function AdminQueue({ session = {}, onNotice = () => {} }) {
   const navigate = useNavigate();
   const [tab, setTab] = useState('overview');
+  const [overviewMapView, setOverviewMapView] = useState('map');
+  const [focusedArea, setFocusedArea] = useState(null);
   const [overview, setOverview] = useState({});
   const [verifications, setVerifications] = useState([]);
   const [flaggedBatches, setFlaggedBatches] = useState([]);
+  const [activeBatches, setActiveBatches] = useState([]);
+  const [activeBatchesAvailable, setActiveBatchesAvailable] = useState(false);
   const [menroStats, setMenroStats] = useState([]);
   const [leaderboard, setLeaderboard] = useState(emptyLeaderboard);
   const [statusFilter, setStatusFilter] = useState('pending');
@@ -150,19 +175,23 @@ export default function AdminQueue({ session = {}, onNotice = () => {} }) {
     setLoading(true); setError(''); setWaking(false);
     for (let attempt = 0; attempt < 2; attempt += 1) {
       try {
-        const [overviewResponse, verificationsResponse, flaggedResponse, leaderboardResponse] = await Promise.all([
+        const [overviewResponse, verificationsResponse, flaggedResponse, leaderboardResponse, batchResponse] = await Promise.all([
           api.get('/admin/overview'), api.get('/admin/verifications?status=all'), api.get('/admin/flagged'), api.get('/admin/leaderboard'),
+          api.get('/batches', { params: { limit: 100 } }).catch(() => null),
         ]);
         const overviewData = responseData(overviewResponse);
         const verificationData = responseData(verificationsResponse);
         const flaggedData = responseData(flaggedResponse);
         const leaderboardData = responseData(leaderboardResponse);
+        const batchData = responseData(batchResponse);
         const ledger = asArray(overviewData.ledger);
         const features = asArray(overviewData.heatmap?.features).filter(feature => feature?.geometry?.type === 'Point');
         setOverview({ ...overviewData, ledger, heatmap: { ...asObject(overviewData.heatmap), features } });
         setMenroStats(ledger);
         setVerifications(asArray(verificationData.applicants));
         setFlaggedBatches(asArray(flaggedData.batches));
+        setActiveBatches(asArray(batchData.batches));
+        setActiveBatchesAvailable(Boolean(batchResponse));
         setLeaderboard({ merchants: asArray(leaderboardData.merchants), ngos: asArray(leaderboardData.ngos) });
         setLoading(false); setWaking(false); return true;
       } catch (loadError) {
@@ -225,6 +254,41 @@ export default function AdminQueue({ session = {}, onNotice = () => {} }) {
 
   const jurisdiction = asText(overview.jurisdiction?.label, session.assignedMunicipality === 'ALL' || !session.assignedMunicipality ? 'Iloilo Province (All LGUs)' : `Municipality of ${session.assignedMunicipality}`);
   const kpis = asObject(overview.kpis); const features = asArray(overview.heatmap?.features);
+  const pendingCount = Number(kpis.pendingReviewsCount ?? verifications.filter(user => (user?.verificationStatus || (user?.verified ? 'verified' : 'pending')) === 'pending').length) || 0;
+  const safetyReviewCount = flaggedBatches.filter(batch => batch?.foodSafetyFlagged).length;
+  const scopedActiveBatches = activeBatches.filter(batch => session.assignedMunicipality === 'ALL' || !session.assignedMunicipality || String(batch?.merchantId?.municipality || '').trim().toLowerCase() === String(session.assignedMunicipality).trim().toLowerCase());
+  const barangayRows = useMemo(() => {
+    const rows = new Map();
+    for (const item of asArray(menroStats)) {
+      const barangay = asText(item?.barangay, 'Unspecified');
+      const municipality = asText(item?.municipality, 'Iloilo Province');
+      const key = `${municipality.toLowerCase()}|${barangay.toLowerCase()}`;
+      rows.set(key, { key, barangay, municipality, mealsSaved: Number(item?.mealsSaved) || 0, foodDivertedKg: Number(item?.foodDivertedKg) || 0, activeStores: 0, coordinates: null });
+    }
+    for (const feature of features) {
+      const props = asObject(feature?.properties);
+      const coordinates = asArray(feature?.geometry?.coordinates);
+      const lng = Number(coordinates[0]); const lat = Number(coordinates[1]);
+      const barangay = asText(props.barangay, 'Unspecified');
+      const municipality = asText(props.municipality, 'Iloilo Province');
+      const key = `${municipality.toLowerCase()}|${barangay.toLowerCase()}`;
+      if (!rows.has(key)) rows.set(key, { key, barangay, municipality, mealsSaved: 0, foodDivertedKg: 0, activeStores: 0, coordinates: null });
+      if (!rows.get(key).coordinates && isWithinIloilo(lat, lng)) rows.get(key).coordinates = [lat, lng];
+    }
+    for (const batch of scopedActiveBatches) {
+      const barangay = asText(batch?.merchantId?.barangay, 'Unspecified');
+      const municipality = asText(batch?.merchantId?.municipality, 'Iloilo Province');
+      const key = `${municipality.toLowerCase()}|${barangay.toLowerCase()}`;
+      if (!rows.has(key)) rows.set(key, { key, barangay, municipality, mealsSaved: 0, foodDivertedKg: 0, activeStores: 0, coordinates: null });
+      const coordinates = asArray(batch?.merchantId?.location?.coordinates);
+      if (!rows.get(key).coordinates && coordinates.length === 2 && isWithinIloilo(Number(coordinates[1]), Number(coordinates[0]))) rows.get(key).coordinates = [Number(coordinates[1]), Number(coordinates[0])];
+      const activeMerchantIds = rows.get(key).activeMerchantIds || new Set();
+      activeMerchantIds.add(String(batch?.merchantId?._id || batch?.merchantId?.id || batch?.merchantId?.storeName || ''));
+      rows.get(key).activeMerchantIds = activeMerchantIds;
+    }
+    return [...rows.values()].map(row => ({ ...row, activeStores: row.activeMerchantIds?.size || 0 })).sort((a, b) => b.foodDivertedKg - a.foodDivertedKg || b.activeStores - a.activeStores).slice(0, 6);
+  }, [menroStats, features, scopedActiveBatches]);
+  const maxBarangayKg = Math.max(1, ...barangayRows.map(row => row.foodDivertedKg));
   const filteredAccounts = useMemo(() => verifications.filter(user => {
     const status = user?.verificationStatus || (user?.verified ? 'verified' : 'pending');
     if (statusFilter === 'rejected-suspended') return status === 'rejected' || status === 'suspended';
@@ -233,15 +297,31 @@ export default function AdminQueue({ session = {}, onNotice = () => {} }) {
 
   return <main className="dashboard-shell admin-command-center">
     <header className="admin-command-header"><div><p className="eyebrow">Multi-LGU · MENRO command center</p><h1>SalbarKain Admin</h1><p>Verification, food rescue, and barangay impact for your jurisdiction.</p></div><span className="admin-jurisdiction">Jurisdiction: {jurisdiction}</span></header>
-    <div className="admin-tabs" role="tablist" aria-label="Admin command center sections">{TABS.filter(([key]) => key !== 'officers' || session.assignedMunicipality === 'ALL').map(([key, label]) => <button key={key} type="button" role="tab" aria-selected={tab === key} className={`filter-pill ${tab === key ? 'active' : ''}`} onClick={() => setTab(key)}>{label}</button>)}<button type="button" className="secondary-button" onClick={() => load({ manual: true })} disabled={loading}>{loading ? 'Refreshing…' : 'Refresh'}</button></div>
+    <div className="admin-tabs" role="tablist" aria-label="Admin command center sections">{TABS.filter(([key]) => key !== 'officers' || session.assignedMunicipality === 'ALL').map(([key, label]) => { const count = key === 'verifications' ? pendingCount : key === 'flagged' ? flaggedBatches.length : 0; return <button key={key} type="button" role="tab" aria-selected={tab === key} className={`filter-pill ${tab === key ? 'active' : ''}`} onClick={() => { if (key === 'verifications') setStatusFilter('pending'); setTab(key); }}><span>{label}</span>{count > 0 && <span className="admin-tab-count" aria-label={`${count} items need review`}>{formatNumber(count)}</span>}</button>; })}<button type="button" className="secondary-button" onClick={() => load({ manual: true })} disabled={loading}>{loading ? 'Refreshing…' : 'Refresh'}</button></div>
     {waking && <div className="alert-banner admin-wake-banner" role="status"><span>Waking up LGU server—retrying…</span><button className="secondary-button compact" onClick={() => load({ manual: true })} disabled={loading}>Retry now</button></div>}
     {error && <div className="alert-banner admin-error-banner" role="alert"><span>{error}</span><button className="secondary-button compact" onClick={() => load({ manual: true })} disabled={loading}>Retry</button></div>}
     {loading ? <AdminSkeleton /> : <>
       {tab === 'overview' && <>
-        <section className="admin-kpi-grid">{[
-          ['Total meals rescued', `${formatNumber(kpis.mealsSaved)} packs`], ['Food waste diverted', `${formatNumber(kpis.foodDivertedKg, 1)} kg`], ['CO₂e prevented', `${formatNumber(kpis.co2PreventedKg, 1)} kg`], ['Pending KYB approvals', formatNumber(kpis.pendingReviewsCount)],
-        ].map(([label, value]) => <article className="panel admin-kpi" key={label}><span>{label}</span><strong>{value}</strong></article>)}</section>
-        <section className="panel admin-map-panel"><div><h2>Iloilo food rescue heatmap</h2><p className="panel-subtitle">Verified food partners and local activity inside Iloilo Province.</p></div><AdminMapBoundary><MapContainer center={ILOILO_CENTER} zoom={13} {...ILOILO_MAP_OPTIONS} scrollWheelZoom={false} className="admin-command-map"><OfflineIloiloLayer /><ReliableTileLayer /><HeatLayer features={features} /><MapPins features={features} /></MapContainer></AdminMapBoundary>{!features.length && <p className="panel-subtitle">No heatmap coordinates yet. The offline Iloilo guide is shown until partner activity points are available.</p>}</section>
+        <section className="admin-kpi-grid">
+          <article className="panel admin-kpi"><span>Total meals rescued</span><strong>{formatNumber(kpis.mealsSaved)} packs</strong><small className="admin-kpi-note admin-kpi-positive">+100% landfill diverted</small></article>
+          <article className="panel admin-kpi"><span>Food waste diverted</span><strong>{formatNumber(kpis.foodDivertedKg, 1)} kg</strong><small className="admin-kpi-note">RA 9003 organic diversion tally</small></article>
+          <article className="panel admin-kpi"><span>CO₂e prevented</span><strong>{formatNumber(kpis.co2PreventedKg, 1)} kg</strong><small className="admin-kpi-note">UNEP 1.25 kg CO₂e / pack factor</small></article>
+          <button type="button" className={`panel admin-kpi admin-kpi-action ${pendingCount > 0 ? 'is-pending' : ''}`} disabled={pendingCount === 0} onClick={() => { setStatusFilter('pending'); setTab('verifications'); }}><span>Pending KYB approvals</span><strong>{formatNumber(pendingCount)}</strong><small className="admin-kpi-note">{pendingCount > 0 ? 'Review now →' : 'No applications waiting'}</small></button>
+        </section>
+
+        <section className="admin-intelligence-grid">
+          <article className="panel admin-intelligence-map">
+            <div className="admin-intelligence-heading"><div><p className="eyebrow">Municipal intelligence</p><h2>Iloilo food rescue & surplus map</h2><p className="panel-subtitle">Verified partner locations and rescue activity inside your jurisdiction.</p></div><div className="admin-map-toggle" role="group" aria-label="Overview map display"><button type="button" className={overviewMapView === 'map' ? 'active' : ''} aria-pressed={overviewMapView === 'map'} onClick={() => setOverviewMapView('map')}>Heatmap & pins</button><button type="button" className={overviewMapView === 'grid' ? 'active' : ''} aria-pressed={overviewMapView === 'grid'} onClick={() => setOverviewMapView('grid')}>Barangay grid</button></div></div>
+            {overviewMapView === 'map' ? <AdminMapBoundary fallback={<div className="admin-barangay-grid" role="status"><p className="admin-grid-note">Live map is unavailable right now. Iloilo rescue data remains available below.</p>{barangayRows.length ? barangayRows.map(row => <article key={row.key}><div><strong>{row.barangay}</strong><span>{row.municipality}</span></div><b>{formatNumber(row.foodDivertedKg, 1)} kg</b></article>) : <p className="admin-grid-note">No barangay activity has been recorded yet. The overview and export remain available.</p>}</div>}><div className="admin-command-map-wrap"><MapContainer center={focusedArea?.coordinates || ILOILO_CENTER} zoom={focusedArea?.coordinates ? 14 : 12} {...ILOILO_MAP_OPTIONS} scrollWheelZoom={false} className="admin-command-map"><OfflineIloiloLayer /><ReliableTileLayer /><RefreshOverviewMap /><FocusMapArea area={focusedArea} /><HotspotCircles features={features} /><MapPins features={features} /></MapContainer>{!features.length && <div className="admin-map-empty-note">No partner coordinates yet · showing the Iloilo offline guide</div>}</div></AdminMapBoundary> : <div className="admin-barangay-grid">{barangayRows.length ? barangayRows.map(row => <button type="button" className="admin-grid-cell" key={row.key} onClick={() => { setFocusedArea(row); setOverviewMapView('map'); }}><div><strong>{row.barangay}</strong><span>{row.municipality}</span></div><b>{formatNumber(row.foodDivertedKg, 1)} kg</b><div className="admin-grid-bar-track"><span style={{ width: `${Math.max(row.foodDivertedKg ? 7 : 0, row.foodDivertedKg / maxBarangayKg * 100)}%` }} /></div><small>{formatNumber(row.mealsSaved)} packs rescued · {activeBatchesAvailable ? formatNumber(row.activeStores) : '—'} active stores</small><span className="admin-grid-open">View on map →</span></button>) : <div className="admin-grid-empty"><h3>No barangay activity yet</h3><p>Rescue totals and verified storefronts will appear here as partners use the network.</p></div>}</div>}
+            <div className="admin-map-legend"><span><i className="admin-legend-pin" /> Verified partner</span><span><i className="admin-legend-hotspot" /> Rescue hotspot</span><span>{formatNumber(features.length)} partner locations</span></div>
+          </article>
+
+          <aside className="admin-intelligence-side">
+            <section className="panel admin-breakdown-card"><div className="admin-section-heading"><div><p className="eyebrow">Area performance</p><h2>Barangay impact breakdown</h2></div><span className="admin-count">Top {barangayRows.length}</span></div>{barangayRows.length ? <ol className="admin-breakdown-list">{barangayRows.map((row, index) => <li key={row.key}><div className="admin-breakdown-top"><span className="admin-breakdown-rank">{index + 1}</span><div><strong>{row.barangay}</strong><small>{row.municipality}</small></div><b>{formatNumber(row.foodDivertedKg, 1)} kg</b></div><div className="admin-grid-bar-track"><span style={{ width: `${Math.max(row.foodDivertedKg ? 7 : 0, row.foodDivertedKg / maxBarangayKg * 100)}%` }} /></div><small className="admin-breakdown-meta">{activeBatchesAvailable ? formatNumber(row.activeStores) : '—'} active stores · {formatNumber(row.mealsSaved)} packs rescued</small></li>)}</ol> : <div className="admin-grid-empty"><p>No barangay rescue records yet. The list fills as pickups are verified.</p></div>}</section>
+
+            <section className="panel admin-action-card"><div><p className="eyebrow">For action</p><h2>LGU priority alerts</h2></div><ul className="admin-action-list"><li><span className={`admin-action-dot ${pendingCount ? 'urgent' : ''}`} /><div><strong>{pendingCount ? `${formatNumber(pendingCount)} merchant / NGO KYB ${pendingCount === 1 ? 'permit awaits' : 'permits await'} review` : 'No KYB permits awaiting review'}</strong><small>{pendingCount ? 'Account verification is needed before approved partners can post.' : 'Verification queue is clear.'}</small></div>{pendingCount > 0 && <button type="button" onClick={() => { setStatusFilter('pending'); setTab('verifications'); }}>Review</button>}</li><li><span className={`admin-action-dot ${safetyReviewCount ? 'urgent' : ''}`} /><div><strong>{safetyReviewCount ? `${formatNumber(safetyReviewCount)} listing${safetyReviewCount === 1 ? '' : 's'} need food-safety review` : '0 active food-safety alerts'}</strong><small>{safetyReviewCount ? 'Open Trust & Safety to inspect reported listings.' : 'No active food-safety reports require action.'}</small></div>{safetyReviewCount > 0 && <button type="button" onClick={() => setTab('flagged')}>Review</button>}</li></ul><div className="admin-export-action"><div><strong>RA 9003 MENRO report</strong><small>Download current jurisdiction totals as a CSV file.</small></div><button type="button" className="primary-button compact" onClick={exportLedger}>Export CSV</button></div></section>
+          </aside>
+        </section>
       </>}
 
       {tab === 'verifications' && <section className="panel"><div className="admin-ledger-heading"><div><h2>KYB documents & account status</h2><p className="panel-subtitle">Review submitted documents and manage partner access within your jurisdiction.</p></div><span className="admin-count">{filteredAccounts.length} accounts</span></div><div className="admin-status-filters" role="group" aria-label="Filter accounts by status">{ACCOUNT_FILTERS.map(([key, label]) => <button key={key} type="button" className={`filter-pill ${statusFilter === key ? 'active' : ''}`} aria-pressed={statusFilter === key} onClick={() => setStatusFilter(key)}>{label}</button>)}</div>
