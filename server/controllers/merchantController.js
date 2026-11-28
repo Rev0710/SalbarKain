@@ -8,19 +8,21 @@ const httpError = require('../utils/httpError');
 const { batchCache, invalidateBatchCache } = require('../utils/cache');
 
 const ALLERGENS = ['None / Allergen-Free', 'Shrimp / Seafood', 'Peanuts / Tree Nuts', 'Dairy', 'Eggs', 'Gluten / Wheat', 'Pork (Non-Halal)'];
+const ILOILO_MUNICIPALITIES = ['Iloilo City', 'Pavia', 'Santa Barbara', 'Oton', 'Leganes', 'Zarraga', 'Cabatuan', 'Pototan', 'Passi City', 'Miagao', 'Tubungan', 'Other Iloilo Municipality'];
 
 function cleanProfilePart(value) {
-  return typeof value === 'string'
-    ? value.replace(/\bunspecified\b/gi, '').replace(/[\s,·-]+/g, ' ').trim()
-    : '';
+  if (typeof value !== 'string') return '';
+  const cleaned = value.trim();
+  return !cleaned || /^unspecified$/i.test(cleaned) ? '' : cleaned;
 }
 
 function profileFields(user) {
+  const municipality = cleanProfilePart(user.municipality);
   return {
     id: user._id.toString(), role: user.role, name: user.name, email: user.email,
     storeName: user.storeName, organizationName: user.role === 'merchant' ? user.storeName : user.organizationName,
     category: user.category, address: cleanProfilePart(user.address),
-    barangay: cleanProfilePart(user.barangay), municipality: cleanProfilePart(user.municipality) || 'Iloilo Province',
+    barangay: cleanProfilePart(user.barangay), municipality: !municipality || /^iloilo province$/i.test(municipality) ? 'Iloilo City' : municipality,
     location: user.location, storefrontPhotoUrl: user.storefrontPhotoUrl || '',
     contactNumber: user.contactNumber || user.phone || '',
     defaultClosingTime: user.defaultClosingTime || '20:30',
@@ -62,6 +64,18 @@ async function updateMerchantProfile(req, res) {
     if (!['bakery', 'eatery', 'grocery', 'other'].includes(req.body.category)) throw httpError(400, 'INVALID_CATEGORY', 'Choose a valid business category.');
     update.category = req.body.category;
   }
+  if (req.body.municipality !== undefined) {
+    if (typeof req.body.municipality !== 'string' || !ILOILO_MUNICIPALITIES.includes(req.body.municipality.trim())) throw httpError(400, 'INVALID_MUNICIPALITY', 'Choose a valid Iloilo municipality or city.');
+    update.municipality = req.body.municipality.trim();
+  }
+  if (req.body.barangay !== undefined) {
+    if (typeof req.body.barangay !== 'string' || req.body.barangay.trim().length > 100 || /^unspecified$/i.test(req.body.barangay.trim())) throw httpError(400, 'INVALID_BARANGAY', 'Enter a barangay name, or leave it blank.');
+    update.barangay = req.body.barangay.trim();
+  }
+  if (req.body.address !== undefined) {
+    if (typeof req.body.address !== 'string' || req.body.address.trim().length < 3 || req.body.address.trim().length > 300 || /^unspecified$/i.test(req.body.address.trim())) throw httpError(400, 'INVALID_ADDRESS', 'Enter a street or landmark address up to 300 characters.');
+    update.address = req.body.address.trim();
+  }
   if (req.body.contactNumber !== undefined) {
     if (typeof req.body.contactNumber !== 'string' || req.body.contactNumber.trim().length > 24) throw httpError(400, 'INVALID_CONTACT_NUMBER', 'Enter a contact number up to 24 characters.');
     update.contactNumber = req.body.contactNumber.trim();
@@ -83,6 +97,12 @@ async function updateMerchantProfile(req, res) {
     update.defaultAllergens = allergens;
   }
 
+  const locationChanged = Object.hasOwn(update, 'municipality') || Object.hasOwn(update, 'barangay');
+  if (locationChanged) {
+    if (!Object.hasOwn(update, 'municipality') && !ILOILO_MUNICIPALITIES.includes(String(user.municipality || '').trim())) update.municipality = 'Iloilo City';
+    if (!Object.hasOwn(update, 'barangay') && (!user.barangay || /^unspecified$/i.test(String(user.barangay).trim()))) update.barangay = '';
+  }
+
   const uploadedUrl = req.file ? await uploadImageBuffer(req.file, { folder: 'salbarkain/storefronts' }) : null;
   const oldPublicId = user.storefrontPhotoPublicId;
   if (uploadedUrl) { update.storefrontPhotoUrl = uploadedUrl; update.storefrontPhotoPublicId = undefined; }
@@ -91,6 +111,13 @@ async function updateMerchantProfile(req, res) {
     await user.save();
   } catch (error) {
     throw error;
+  }
+  if (locationChanged) {
+    const locationUpdate = { municipality: user.municipality, barangay: user.barangay };
+    await Promise.all([
+      Batch.updateMany({ merchantId: user._id }, { $set: { ...locationUpdate, address: user.address } }),
+      Claim.updateMany({ merchantId: user._id }, { $set: locationUpdate }),
+    ]);
   }
   if (uploadedUrl && oldPublicId) await cloudinary.uploader.destroy(oldPublicId, { resource_type: 'image' }).catch(() => {});
   batchCache.flushAll();

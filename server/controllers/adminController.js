@@ -11,10 +11,19 @@ const { invalidateBatchCache } = require('../utils/cache');
 const normalizePhone = require('../utils/phone');
 
 const ILOILO_CENTER = [10.7450, 122.5500];
-const MUNICIPALITIES = ['Iloilo City', 'Pavia', 'Santa Barbara', 'Oton', 'Leganes', 'Zarraga', 'Cabatuan', 'Pototan', 'Passi City', 'Miagao', 'Other Iloilo Municipality'];
+const MUNICIPALITIES = ['Iloilo City', 'Pavia', 'Santa Barbara', 'Oton', 'Leganes', 'Zarraga', 'Cabatuan', 'Pototan', 'Passi City', 'Miagao', 'Tubungan', 'Other Iloilo Municipality'];
 const adminScope = (req) => req.user.assignedMunicipality === 'ALL' || !req.user.assignedMunicipality ? {} : { municipality: req.user.assignedMunicipality };
 const jurisdictionName = (req) => req.user.assignedMunicipality === 'ALL' || !req.user.assignedMunicipality
   ? 'Iloilo Province (All LGUs)' : `Municipality of ${req.user.assignedMunicipality}`;
+const safeMongoLocation = (path, fallback) => {
+  const trimmed = { $trim: { input: { $ifNull: [path, ''] } } };
+  return { $cond: [
+    { $and: [{ $ne: [trimmed, ''] }, { $ne: [{ $toLower: trimmed }, 'unspecified'] }, { $ne: [{ $toLower: trimmed }, 'iloilo province'] }] },
+    trimmed,
+    fallback,
+  ] };
+};
+const safeLocationValue = (value, fallback) => typeof value === 'string' && value.trim() && !/^unspecified$/i.test(value.trim()) && !/^iloilo province$/i.test(value.trim()) ? value.trim() : fallback;
 
 async function scopedMerchantIds(req) {
   const scope = adminScope(req);
@@ -37,7 +46,7 @@ async function backfillScopedImpactEntries(req) {
     { $match: adminScope(req).municipality ? { 'merchant.municipality': adminScope(req).municipality } : {} },
     { $project: {
       claimId: '$_id', batchId: 1, merchantId: 1, itemName: '$batch.itemName', storeName: '$merchant.storeName',
-      barangay: { $ifNull: ['$merchant.barangay', 'Unspecified'] }, municipality: { $ifNull: ['$merchant.municipality', 'Unspecified'] },
+      barangay: safeMongoLocation('$merchant.barangay', 'General Area'), municipality: safeMongoLocation('$merchant.municipality', 'Iloilo City'),
       quantity: '$qty', foodKg: { $multiply: ['$qty', 0.5] }, co2eKg: { $multiply: ['$qty', 1.25] }, completedAt: '$updatedAt',
     } },
   ]);
@@ -54,7 +63,7 @@ function adminSafeUser(user) {
     id: user._id.toString(), role: user.role, name: user.name, email: user.email,
     phone: user.phone, storeName: user.storeName, organizationName: user.organizationName,
     category: user.category, address: user.address, location: user.location,
-    barangay: user.barangay || 'Unspecified', municipality: user.municipality || 'Unspecified',
+    barangay: safeLocationValue(user.barangay, 'General Area'), municipality: safeLocationValue(user.municipality, 'Iloilo City'),
     storefrontPhotoUrl: user.storefrontPhotoUrl, verificationStatus: user.verificationStatus,
     rejectionReason: user.rejectionReason, createdAt: user.createdAt,
     zeroWasteCertified: user.zeroWasteCertified === true,
@@ -62,18 +71,29 @@ function adminSafeUser(user) {
   };
 }
 
-async function aggregateLedger(scope) {
-  return ImpactEntry.aggregate([
-    { $match: scope },
+async function aggregateLedger(req) {
+  const pipeline = [
+    { $lookup: { from: User.collection.name, localField: 'merchantId', foreignField: '_id', as: 'merchant' } },
+    { $unwind: { path: '$merchant', preserveNullAndEmptyArrays: true } },
+    { $addFields: {
+      resolvedMunicipality: safeMongoLocation('$merchant.municipality', 'Iloilo City'),
+      resolvedBarangay: safeMongoLocation('$merchant.barangay', 'General Area'),
+    } },
+  ];
+  if (req.user.assignedMunicipality && req.user.assignedMunicipality !== 'ALL') {
+    pipeline.push({ $match: { resolvedMunicipality: req.user.assignedMunicipality } });
+  }
+  pipeline.push(
     { $group: {
-      _id: { municipality: '$municipality', barangay: '$barangay' },
+      _id: { municipality: '$resolvedMunicipality', barangay: '$resolvedBarangay' },
       mealsSaved: { $sum: '$quantity' },
       foodDivertedKg: { $sum: '$foodKg' },
       co2PreventedKg: { $sum: '$co2eKg' },
     } },
     { $project: { _id: 0, municipality: '$_id.municipality', barangay: '$_id.barangay', mealsSaved: 1, foodDivertedKg: 1, co2PreventedKg: 1 } },
     { $sort: { municipality: 1, barangay: 1 } },
-  ]);
+  );
+  return ImpactEntry.aggregate(pipeline);
 }
 
 async function overview(req, res) {
@@ -83,18 +103,22 @@ async function overview(req, res) {
   const pendingQuery = { role: { $in: ['merchant', 'ngo'] }, verificationStatus: 'pending', ...scope };
   const merchantIds = await scopedMerchantIds(req);
   const flaggedQuery = { status: 'flagged', ...(merchantIds ? { merchantId: { $in: merchantIds } } : {}) };
-  const [impactRows, verifiedMerchantsCount, pendingReviewsCount, flaggedCount, ledger, merchants] = await Promise.all([
-    ImpactEntry.aggregate([{ $match: scope }, { $group: { _id: null, mealsSaved: { $sum: '$quantity' }, foodDivertedKg: { $sum: '$foodKg' }, co2PreventedKg: { $sum: '$co2eKg' } } }]),
+  const [verifiedMerchantsCount, pendingReviewsCount, flaggedCount, ledger, merchants] = await Promise.all([
     User.countDocuments({ ...merchantQuery, $or: [{ verificationStatus: 'verified' }, { verified: true }] }),
     User.countDocuments(pendingQuery),
     Batch.countDocuments(flaggedQuery),
-    aggregateLedger(scope),
+    aggregateLedger(req),
     User.find({ ...merchantQuery, $or: [{ verificationStatus: 'verified' }, { verified: true }] }).select('storeName municipality barangay location').lean(),
   ]);
+  const totals = ledger.reduce((total, row) => ({
+    mealsSaved: total.mealsSaved + (Number(row.mealsSaved) || 0),
+    foodDivertedKg: total.foodDivertedKg + (Number(row.foodDivertedKg) || 0),
+    co2PreventedKg: total.co2PreventedKg + (Number(row.co2PreventedKg) || 0),
+  }), { mealsSaved: 0, foodDivertedKg: 0, co2PreventedKg: 0 });
   const ids = merchants.map((merchant) => merchant._id);
   const [stock, rescued] = ids.length ? await Promise.all([
     Batch.aggregate([{ $match: { merchantId: { $in: ids }, status: 'active', expiresAt: { $gt: new Date() }, remainingQty: { $gt: 0 } } }, { $group: { _id: '$merchantId', amount: { $sum: '$remainingQty' } } }]),
-    ImpactEntry.aggregate([{ $match: { ...scope } }, { $group: { _id: '$merchantId', amount: { $sum: '$quantity' } } }]),
+    ImpactEntry.aggregate([{ $match: { merchantId: { $in: ids } } }, { $group: { _id: '$merchantId', amount: { $sum: '$quantity' } } }]),
   ]) : [[], []];
   const weightByMerchant = new Map();
   for (const row of stock) weightByMerchant.set(String(row._id), row.amount);
@@ -102,9 +126,8 @@ async function overview(req, res) {
   const heatmap = merchants.flatMap((merchant) => {
     const coordinates = merchant.location?.coordinates;
     if (!Array.isArray(coordinates) || coordinates.length !== 2) return [];
-    return [{ type: 'Feature', geometry: { type: 'Point', coordinates }, properties: { storeName: merchant.storeName, municipality: merchant.municipality, barangay: merchant.barangay, weight: weightByMerchant.get(String(merchant._id)) || 1 } }];
+    return [{ type: 'Feature', geometry: { type: 'Point', coordinates }, properties: { storeName: merchant.storeName, municipality: safeLocationValue(merchant.municipality, 'Iloilo City'), barangay: safeLocationValue(merchant.barangay, 'General Area'), weight: weightByMerchant.get(String(merchant._id)) || 1 } }];
   });
-  const totals = impactRows[0] || { mealsSaved: 0, foodDivertedKg: 0, co2PreventedKg: 0 };
   res.set('Cache-Control', 'no-store').json({ success: true, data: {
     jurisdiction: { assignedMunicipality: req.user.assignedMunicipality || 'ALL', label: jurisdictionName(req) },
     kpis: { mealsSaved: totals.mealsSaved, foodDivertedKg: Number(totals.foodDivertedKg.toFixed(2)), co2PreventedKg: Number(totals.co2PreventedKg.toFixed(2)), verifiedMerchantsCount, pendingReviewsCount, flaggedCount },
@@ -208,7 +231,7 @@ function csvCell(value) {
 
 async function exportMenro(req, res) {
   await backfillScopedImpactEntries(req);
-  const ledger = await aggregateLedger(adminScope(req));
+  const ledger = await aggregateLedger(req);
   const rows = [['municipality', 'barangay', 'rescued_meals', 'food_diverted_kg', 'co2e_prevented_kg'], ...ledger.map((row) => [row.municipality, row.barangay, row.mealsSaved, Number(row.foodDivertedKg).toFixed(2), Number(row.co2PreventedKg).toFixed(2)])];
   const csv = rows.map((row) => row.map(csvCell).join(',')).join('\r\n');
   res.set({ 'Cache-Control': 'no-store', 'Content-Disposition': 'attachment; filename="salbarkain-menro-impact.csv"' }).type('text/csv').send(csv);

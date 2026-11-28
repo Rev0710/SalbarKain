@@ -80,7 +80,7 @@ async function createClaim(req, res) {
       }
 
       const candidateBatch = await Batch.findById(input.batchId).session(session).select('merchantId isDonationOnly ngoPriorityUntil expiresAt safeUntil price originalPrice retailValue isFlashDropEnabled').lean();
-      const merchant = candidateBatch && await User.findOne({ _id: candidateBatch.merchantId, role: 'merchant', $or: [{ verificationStatus: 'verified' }, { verified: true }] }).session(session).select('_id').lean();
+      const merchant = candidateBatch && await User.findOne({ _id: candidateBatch.merchantId, role: 'merchant', $or: [{ verificationStatus: 'verified' }, { verified: true }] }).session(session).select('_id municipality barangay').lean();
       if (!merchant) throw httpError(404, 'BATCH_UNAVAILABLE', 'This batch is not currently available.');
       if (new Date(candidateBatch.expiresAt) <= now || new Date(candidateBatch.safeUntil || candidateBatch.expiresAt) <= now) throw httpError(410, 'BATCH_EXPIRED', 'This food batch is past its safe pickup window.');
       const verifiedNgo = req.user?.role === 'ngo' && (req.user.verificationStatus === 'verified' || req.user.verified);
@@ -115,6 +115,8 @@ async function createClaim(req, res) {
         qrToken,
         batchId: batch._id,
         merchantId: batch.merchantId,
+        municipality: merchant.municipality && !/^unspecified$/i.test(merchant.municipality) ? merchant.municipality : 'Iloilo City',
+        barangay: merchant.barangay && !/^unspecified$/i.test(merchant.barangay) ? merchant.barangay : 'General Area',
         qty: requestedQty,
         quantity: requestedQty,
         buyerName: input.buyerName,
@@ -252,8 +254,8 @@ async function verifyClaim(req, res) {
         merchantId: completed.merchantId,
         itemName: batch.itemName,
         storeName: merchant.storeName || 'Local food partner',
-        barangay: merchant.barangay || 'Unspecified',
-        municipality: merchant.municipality || 'Unspecified',
+        barangay: merchant.barangay && !/^unspecified$/i.test(merchant.barangay) ? merchant.barangay : 'General Area',
+        municipality: merchant.municipality && !/^unspecified$/i.test(merchant.municipality) ? merchant.municipality : 'Iloilo City',
         quantity: completed.qty,
         foodKg: Number((completed.qty * 0.5).toFixed(2)),
         co2eKg: Number((completed.qty * 1.25).toFixed(2)),

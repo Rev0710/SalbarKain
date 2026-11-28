@@ -116,6 +116,9 @@ async function createBatch(req, res) {
       ...input,
       ngoPriorityUntil: ngoPriorityEnabled && !input.isDonationOnly ? new Date(Date.now() + 15 * 60 * 1000) : null,
       merchantId: req.user.id,
+      municipality: req.user.municipality && !/^unspecified$/i.test(req.user.municipality) ? req.user.municipality : 'Iloilo City',
+      barangay: req.user.barangay && !/^unspecified$/i.test(req.user.barangay) ? req.user.barangay : 'General Area',
+      address: req.user.address && !/^unspecified$/i.test(req.user.address) ? req.user.address : '',
       photoUrl: uploadedPhotoUrl || normalizeDemoPhotoUrl(restockSource?.photoUrl) || '/demo-images/pandesal.svg',
       photoPublicId: restockSource?.photoPublicId,
     });

@@ -7,6 +7,8 @@ import MerchantScanner from '../components/MerchantScanner.jsx';
 import { InventorySkeletons } from '../components/LoadingSkeletons.jsx';
 import { safeImageUrl } from '../utils/safeImageUrl.js';
 
+const ILOILO_MUNICIPALITIES = ['Iloilo City', 'Pavia', 'Santa Barbara', 'Oton', 'Leganes', 'Zarraga', 'Cabatuan', 'Pototan', 'Passi City', 'Miagao', 'Tubungan', 'Other Iloilo Municipality'];
+
 function VerificationUploadPanel() {
   const [document, setDocument] = useState(null);
   const [storefront, setStorefront] = useState(null);
@@ -138,7 +140,7 @@ function AccountSecurityCard({ email }) {
 }
 
 function StoreProfilePanel({ profile, onSaved, onSessionUpdate, completedRescues, onLogoPreviewChange }) {
-  const [form, setForm] = useState({ storeName: '', category: 'bakery', contactNumber: '', defaultClosingTime: '20:30', pickupInstructions: '', defaultAllergens: ['None / Allergen-Free'] });
+  const [form, setForm] = useState({ storeName: '', category: 'bakery', municipality: 'Iloilo City', barangay: '', address: '', contactNumber: '', defaultClosingTime: '20:30', pickupInstructions: '', defaultAllergens: ['None / Allergen-Free'] });
   const [photo, setPhoto] = useState(null);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState('');
@@ -147,7 +149,10 @@ function StoreProfilePanel({ profile, onSaved, onSessionUpdate, completedRescues
 
   useEffect(() => {
     if (!profile) return;
-    setForm({ storeName: profile.storeName || profile.organizationName || '', category: profile.category || 'bakery', contactNumber: profile.contactNumber || '', defaultClosingTime: profile.defaultClosingTime || '20:30', pickupInstructions: profile.pickupInstructions || '', defaultAllergens: profile.defaultAllergens?.length ? profile.defaultAllergens : ['None / Allergen-Free'] });
+    const municipality = typeof profile.municipality === 'string' ? profile.municipality.trim() : '';
+    const barangay = typeof profile.barangay === 'string' ? profile.barangay.trim() : '';
+    const address = typeof profile.address === 'string' ? profile.address.trim() : '';
+    setForm({ storeName: profile.storeName || profile.organizationName || '', category: profile.category || 'bakery', municipality: ILOILO_MUNICIPALITIES.includes(municipality) ? municipality : 'Iloilo City', barangay: /^unspecified$/i.test(barangay) ? '' : barangay, address: /^unspecified$/i.test(address) ? '' : address, contactNumber: profile.contactNumber || '', defaultClosingTime: profile.defaultClosingTime || '20:30', pickupInstructions: profile.pickupInstructions || '', defaultAllergens: profile.defaultAllergens?.length ? profile.defaultAllergens : ['None / Allergen-Free'] });
   }, [profile]);
   useEffect(() => {
     if (!photo) { setPhotoPreview(''); onLogoPreviewChange?.(''); return undefined; }
@@ -168,6 +173,9 @@ function StoreProfilePanel({ profile, onSaved, onSessionUpdate, completedRescues
     const body = new FormData();
     body.append('storeName', form.storeName.trim());
     body.append('category', form.category);
+    body.append('municipality', form.municipality);
+    body.append('barangay', form.barangay.trim());
+    body.append('address', form.address.trim());
     body.append('contactNumber', form.contactNumber);
     body.append('defaultClosingTime', form.defaultClosingTime);
     body.append('pickupInstructions', form.pickupInstructions);
@@ -186,15 +194,19 @@ function StoreProfilePanel({ profile, onSaved, onSessionUpdate, completedRescues
 
   const verified = profile?.verificationStatus === 'verified';
   const verifyingOffice = profile?.verifiedBy?.municipality === 'ALL' ? 'Iloilo Province LGU' : profile?.verifiedBy?.municipality || profile?.verifiedBy?.name || 'Iloilo LGU';
+  const profileMunicipality = typeof profile?.municipality === 'string' && profile.municipality.trim() && !/^unspecified$/i.test(profile.municipality.trim()) && profile.municipality !== 'Iloilo Province' ? profile.municipality.trim() : 'Iloilo City';
+  const profileBarangay = typeof profile?.barangay === 'string' && profile.barangay.trim() && !/^unspecified$/i.test(profile.barangay.trim()) ? profile.barangay.trim() : '';
   return <section className="panel merchant-profile-panel" aria-labelledby="merchant-profile-title">
     <div className="merchant-profile-heading"><div><p className="eyebrow">Store settings</p><h2 id="merchant-profile-title">Store Profile</h2><p className="panel-subtitle">Keep your pickup details current. Buyers see the contact and handoff instructions on their pass.</p></div><span className={`merchant-profile-status ${verified ? 'verified' : 'pending'}`}>{verified ? `Verified by ${verifyingOffice}` : 'Pending LGU review'}</span></div>
     <div className="merchant-profile-identity">
       <div className="merchant-profile-photo">{safeImageUrl(photoPreview || profile?.storefrontPhotoUrl) ? <img src={safeImageUrl(photoPreview || profile?.storefrontPhotoUrl)} alt={profile?.organizationName || profile?.storeName || 'Store'} onError={event => { event.currentTarget.hidden = true; event.currentTarget.nextElementSibling.hidden = false; }} /> : null}<span className="storefront-icon-fallback" hidden={Boolean(safeImageUrl(photoPreview || profile?.storefrontPhotoUrl))}><StorefrontIcon /></span></div>
-      <div className="merchant-profile-facts"><h3>{profile?.storeName || 'Your store'}</h3><p>{({ bakery: 'Bakery', eatery: 'Carinderia / Eatery', grocery: 'Minimart / Grocery', other: 'Other food partner' })[profile?.category] || 'Food partner'}</p><p>{[profile?.barangay, profile?.municipality, 'Iloilo'].filter(Boolean).join(', ')}</p>{profile?.address && <p>{profile.address}</p>}{profile?.verificationDocUrl && <a href={profile.verificationDocUrl} target="_blank" rel="noreferrer">View uploaded business permit ↗</a>}</div>
+      <div className="merchant-profile-facts"><h3>{profile?.storeName || 'Your store'}</h3><p>{({ bakery: 'Bakery', eatery: 'Carinderia / Eatery', grocery: 'Minimart / Grocery', other: 'Other food partner' })[profile?.category] || 'Food partner'}</p><p>{[profileBarangay, profileMunicipality, 'Iloilo'].filter(Boolean).join(', ')}</p>{profile?.address && !/^\s*unspecified\s*$/i.test(profile.address) && <p>{profile.address}</p>}{profile?.verificationDocUrl && <a href={profile.verificationDocUrl} target="_blank" rel="noreferrer">View uploaded business permit ↗</a>}</div>
     </div>
     <form className="form-stack merchant-profile-form" onSubmit={save}>
       <label className="field-label">Store name<input className="field-input" type="text" minLength="2" maxLength="120" required value={form.storeName} onChange={event => setForm(current => ({ ...current, storeName: event.target.value }))} /></label>
       <label className="field-label">Business category<select className="field-input" required value={form.category} onChange={event => setForm(current => ({ ...current, category: event.target.value }))}><option value="bakery">Bakery</option><option value="eatery">Carinderia / Eatery</option><option value="grocery">Minimart / Grocery</option><option value="other">Other food partner</option></select></label>
+      <div className="grid grid-cols-1 sm:grid-cols-2 gap-4"><label className="field-label">Municipality / City<select className="field-input" required value={form.municipality} onChange={event => setForm(current => ({ ...current, municipality: event.target.value }))}>{ILOILO_MUNICIPALITIES.map(municipality => <option key={municipality} value={municipality}>{municipality}</option>)}</select></label><label className="field-label">Barangay<input className="field-input" type="text" maxLength="100" value={form.barangay} onChange={event => setForm(current => ({ ...current, barangay: event.target.value }))} placeholder="e.g., Ungka, Jaro or Ungka I" /></label></div>
+      <label className="field-label">Street / landmark address<input className="field-input" type="text" maxLength="300" required value={form.address} onChange={event => setForm(current => ({ ...current, address: event.target.value }))} placeholder="Street, building, or nearby landmark" /></label>
       <label className="field-label">Storefront photo<input className="field-input" type="file" accept="image/jpeg,image/png,image/webp" onChange={event => setPhoto(event.target.files?.[0] || null)} /><span className="form-note">JPG, PNG or WebP · up to 5 MB</span></label>
       <div className="field-row"><label className="field-label">Store contact number<input className="field-input" type="tel" maxLength="24" value={form.contactNumber} onChange={event => setForm(current => ({ ...current, contactNumber: event.target.value }))} placeholder="09XX XXX XXXX" /></label><label className="field-label">Typical closing time<input className="field-input" type="time" required value={form.defaultClosingTime} onChange={event => setForm(current => ({ ...current, defaultClosingTime: event.target.value }))} /></label></div>
       <label className="field-label">Pickup counter instructions<textarea className="field-input" rows="3" maxLength="240" value={form.pickupInstructions} onChange={event => setForm(current => ({ ...current, pickupInstructions: event.target.value }))} placeholder="e.g. Ask for the SalbarKain counter near the bread display" /></label>

@@ -31,7 +31,7 @@ function authenticate(req, _res, next) {
   }
 
   User.findById(payload.sub)
-    .select('role name email storeName organizationName verified verificationStatus storefrontPhotoUrl barangay municipality assignedMunicipality')
+    .select('role name email storeName organizationName verified verificationStatus storefrontPhotoUrl barangay municipality address assignedMunicipality')
     .lean()
     .then((user) => {
       if (!user || user.role !== payload.role) {
@@ -49,6 +49,7 @@ function authenticate(req, _res, next) {
         storefrontPhotoUrl: user.storefrontPhotoUrl,
         barangay: user.barangay || 'Unspecified',
         municipality: user.municipality || 'Unspecified',
+        address: user.address || '',
         assignedMunicipality: user.role === 'admin' ? (user.assignedMunicipality || 'ALL') : undefined,
       };
       return next();

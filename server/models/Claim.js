@@ -5,6 +5,8 @@ const claimSchema = new Schema({
   qrToken: { type: String, required: true, unique: true, immutable: true, select: false },
   batchId: { type: Schema.Types.ObjectId, ref: 'Batch', required: true, index: true },
   merchantId: { type: Schema.Types.ObjectId, ref: 'User', required: true, index: true },
+  municipality: { type: String, trim: true, maxlength: 100, default: 'Iloilo City', index: true },
+  barangay: { type: String, trim: true, maxlength: 100, default: 'General Area', index: true },
   qty: { type: Number, required: true, min: 1, validate: Number.isInteger },
   quantity: { type: Number, min: 1, validate: Number.isInteger },
   priceAtClaim: { type: Number, min: 0, default: 0 },

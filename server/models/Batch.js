@@ -10,6 +10,9 @@ const ALLERGENS = [
 
 const schema = new Schema({
   merchantId: { type: Schema.Types.ObjectId, ref: 'User', required: true, index: true },
+  municipality: { type: String, trim: true, maxlength: 100, default: 'Iloilo City', index: true },
+  barangay: { type: String, trim: true, maxlength: 100, default: 'General Area', index: true },
+  address: { type: String, trim: true, maxlength: 300, default: '' },
   photoUrl: { type: String, trim: true, required: true },
   photoPublicId: { type: String, trim: true },
   itemName: { type: String, required: true, trim: true, maxlength: 120 },
