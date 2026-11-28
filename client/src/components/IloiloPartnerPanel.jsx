@@ -1,4 +1,5 @@
 import { useMemo, useState } from 'react';
+import { safeImageUrl } from '../utils/safeImageUrl.js';
 
 const MUNICIPALITIES = ['All Iloilo', 'Iloilo City', 'Pavia', 'Santa Barbara', 'Oton', 'Leganes'];
 
@@ -95,7 +96,7 @@ export default function IloiloPartnerPanel({ partners, fallbackBatches, loading,
         const urgent = activeBatchCount > 0 && closesAt && closesAt.getTime() - Date.now() <= 45 * 60 * 1000;
         return <article className="partner-store-row" key={store._id}>
           <div className="partner-store-main">
-            <div className="partner-store-name-line">{store.storefrontPhotoUrl && <img className="partner-store-avatar" src={store.storefrontPhotoUrl} alt="" loading="lazy" onError={(event) => { event.currentTarget.hidden = true; event.currentTarget.nextElementSibling.hidden = false; }} />}<span className="partner-store-avatar partner-store-avatar-fallback" aria-hidden="true" hidden={Boolean(store.storefrontPhotoUrl)}>{(store.storeName || 'S').trim().charAt(0).toUpperCase()}</span><h3 title={store.storeName}>{store.storeName || 'Verified food partner'}</h3><span className="partner-verified" title="KYB verified">✓ Verified</span></div>
+            <div className="partner-store-name-line">{safeImageUrl(store.storefrontPhotoUrl) && <img className="partner-store-avatar" src={safeImageUrl(store.storefrontPhotoUrl)} alt="" loading="lazy" onError={(event) => { event.currentTarget.hidden = true; event.currentTarget.nextElementSibling.hidden = false; }} />}<span className="partner-store-avatar partner-store-avatar-fallback" aria-hidden="true" hidden={Boolean(safeImageUrl(store.storefrontPhotoUrl))}>{(store.storeName || 'S').trim().charAt(0).toUpperCase()}</span><h3 title={store.storeName}>{store.storeName || 'Verified food partner'}</h3><span className="partner-verified" title="KYB verified">✓ Verified</span></div>
             <p className="partner-store-location">{partnerLocation(store)}{Number.isFinite(store.distanceKm) && <span className="partner-distance"> · {formatDistance(store.distanceKm)}</span>}</p>
             <p className={`partner-store-status ${urgent ? 'urgent' : activeBatchCount ? 'available' : 'upcoming'}`}>
               {activeBatchCount > 0 ? `${activePacks} ${activePacks === 1 ? 'pack' : 'packs'} active · Closes ${formatTime(store.closesAt) || 'soon'}` : 'Next drop window · 7:00–9:00 PM'}

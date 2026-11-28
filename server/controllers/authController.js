@@ -6,6 +6,7 @@ const httpError = require('../utils/httpError');
 const { signAccessToken, assertJwtConfigured } = require('../utils/jwt');
 const { recordAuthEvent } = require('../utils/authAudit');
 const cloudinary = require('../config/cloudinary');
+const { uploadImageBuffer } = require('../utils/uploadImage');
 
 const PASSWORD_MIN_LENGTH = 10;
 const PASSWORD_MAX_LENGTH = 72;
@@ -96,18 +97,13 @@ async function register(req, res) {
   assertJwtConfigured();
   const { password, ...userFields } = input;
   const passwordHash = await bcrypt.hash(password, 12);
-  let user; let privateDoc; let storefront;
+  let user; let privateDoc; let storefrontUrl;
   try {
-    const config = cloudinary.config();
-    if (![config.cloud_name, config.api_key, config.api_secret].every((value) => typeof value === 'string' && value.trim())) {
-      throw httpError(503, 'UPLOAD_NOT_CONFIGURED', 'Verification uploads are not configured on this server.');
-    }
-    privateDoc = await uploadToCloudinary(verificationDoc.buffer, { folder: 'salbar-kain/private-verification', resource_type: 'raw', type: 'private', format: verificationDoc.mimetype === 'application/pdf' ? 'pdf' : verificationDoc.mimetype.split('/')[1] });
-    if (req.files?.storefrontPhoto?.[0]) storefront = await uploadToCloudinary(req.files.storefrontPhoto[0].buffer, { folder: 'salbar-kain/storefronts', resource_type: 'image' });
-    user = await User.create({ ...userFields, passwordHash, verificationStatus: 'pending', verified: false, verificationDocPublicId: privateDoc.public_id, verificationDocFormat: privateDoc.format || 'pdf', storefrontPhotoUrl: storefront?.secure_url });
+    privateDoc = await storeVerificationDocument(verificationDoc);
+    if (req.files?.storefrontPhoto?.[0]) storefrontUrl = await uploadImageBuffer(req.files.storefrontPhoto[0], { folder: 'salbarkain/storefronts' });
+    user = await User.create({ ...userFields, passwordHash, verificationStatus: 'pending', verified: false, ...privateDoc, storefrontPhotoUrl: storefrontUrl });
   } catch (error) {
-    if (privateDoc?.public_id) await cloudinary.uploader.destroy(privateDoc.public_id, { resource_type: 'raw', type: 'private' }).catch(() => {});
-    if (storefront?.public_id) await cloudinary.uploader.destroy(storefront.public_id, { resource_type: 'image' }).catch(() => {});
+    if (privateDoc?.verificationDocPublicId) await cloudinary.uploader.destroy(privateDoc.verificationDocPublicId, { resource_type: 'raw', type: 'private' }).catch(() => {});
     if (error.code === 11000) {
       await recordAuthEvent(req, 'register_failure', { email: input.email });
       throw httpError(409, 'EMAIL_ALREADY_REGISTERED', 'An account with this email already exists.');
@@ -123,30 +119,39 @@ async function submitVerificationUpdate(req, res) {
   const verificationDoc = req.files?.verificationDoc?.[0];
   if (!verificationDoc) throw httpError(400, 'VERIFICATION_DOC_REQUIRED', 'Upload a permit or organization verification document.');
   if (!['merchant', 'ngo'].includes(req.user.role)) throw httpError(403, 'ROLE_FORBIDDEN', 'Only merchant and NGO partners can submit verification documents.');
-  const config = cloudinary.config();
-  if (![config.cloud_name, config.api_key, config.api_secret].every((value) => typeof value === 'string' && value.trim())) {
-    throw httpError(503, 'UPLOAD_NOT_CONFIGURED', 'Verification uploads are not configured on this server.');
-  }
-  let privateDoc; let storefront;
+  let privateDoc; let storefrontUrl;
   try {
-    privateDoc = await uploadToCloudinary(verificationDoc.buffer, { folder: 'salbar-kain/private-verification', resource_type: 'raw', type: 'private', format: verificationDoc.mimetype === 'application/pdf' ? 'pdf' : verificationDoc.mimetype.split('/')[1] });
-    if (req.files?.storefrontPhoto?.[0]) storefront = await uploadToCloudinary(req.files.storefrontPhoto[0].buffer, { folder: 'salbar-kain/storefronts', resource_type: 'image' });
-    const user = await User.findById(req.user.id).select('+verificationDocPublicId');
+    privateDoc = await storeVerificationDocument(verificationDoc);
+    if (req.files?.storefrontPhoto?.[0]) storefrontUrl = await uploadImageBuffer(req.files.storefrontPhoto[0], { folder: 'salbarkain/storefronts' });
+    const user = await User.findById(req.user.id).select('+verificationDocPublicId +verificationDocDataUrl +verificationDocMimeType');
     if (!user) throw httpError(404, 'ACCOUNT_NOT_FOUND', 'Partner account was not found.');
     if (user.verificationStatus === 'verified' || user.verified) throw httpError(409, 'ALREADY_VERIFIED', 'Your partner account is already verified.');
     const oldDoc = user.verificationDocPublicId;
-    user.verificationDocPublicId = privateDoc.public_id;
-    user.verificationDocFormat = privateDoc.format || 'pdf';
-    if (storefront) user.storefrontPhotoUrl = storefront.secure_url;
+    user.verificationDocPublicId = privateDoc.verificationDocPublicId || undefined;
+    user.verificationDocFormat = privateDoc.verificationDocFormat || undefined;
+    user.verificationDocDataUrl = privateDoc.verificationDocDataUrl || '';
+    user.verificationDocMimeType = privateDoc.verificationDocMimeType || '';
+    if (storefrontUrl) user.storefrontPhotoUrl = storefrontUrl;
     user.verificationStatus = 'pending'; user.verified = false; user.verificationNote = undefined;
     await user.save();
     if (oldDoc) await cloudinary.uploader.destroy(oldDoc, { resource_type: 'raw', type: 'private' }).catch(() => {});
     return res.status(200).json({ success: true, data: { verificationStatus: user.verificationStatus } });
   } catch (error) {
-    if (privateDoc?.public_id) await cloudinary.uploader.destroy(privateDoc.public_id, { resource_type: 'raw', type: 'private' }).catch(() => {});
-    if (storefront?.public_id) await cloudinary.uploader.destroy(storefront.public_id, { resource_type: 'image' }).catch(() => {});
+    if (privateDoc?.verificationDocPublicId) await cloudinary.uploader.destroy(privateDoc.verificationDocPublicId, { resource_type: 'raw', type: 'private' }).catch(() => {});
     throw error;
   }
+}
+
+async function storeVerificationDocument(file) {
+  const config = cloudinary.config();
+  const configured = [config.cloud_name, config.api_key, config.api_secret].every((value) => typeof value === 'string' && value.trim());
+  if (configured) {
+    try {
+      const uploaded = await uploadToCloudinary(file.buffer, { folder: 'salbar-kain/private-verification', resource_type: 'raw', type: 'private', format: file.mimetype === 'application/pdf' ? 'pdf' : file.mimetype.split('/')[1] });
+      return { verificationDocPublicId: uploaded.public_id, verificationDocFormat: uploaded.format || (file.mimetype === 'application/pdf' ? 'pdf' : file.mimetype.split('/')[1]), verificationDocDataUrl: '', verificationDocMimeType: file.mimetype };
+    } catch { console.warn('Private verification document is being stored in the database fallback.'); }
+  }
+  return { verificationDocPublicId: undefined, verificationDocFormat: undefined, verificationDocDataUrl: `data:${file.mimetype};base64,${file.buffer.toString('base64')}`, verificationDocMimeType: file.mimetype };
 }
 
 function uploadToCloudinary(buffer, options) {

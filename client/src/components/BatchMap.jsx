@@ -1,5 +1,6 @@
-import { useCallback, useEffect, useState } from 'react';
-import { CircleMarker, MapContainer, Popup, useMap } from 'react-leaflet';
+import { useCallback, useEffect, useMemo, useState } from 'react';
+import L from 'leaflet';
+import { MapContainer, Marker, Popup, useMap } from 'react-leaflet';
 import 'leaflet/dist/leaflet.css';
 import { ILOILO_CENTER, ILOILO_MAP_OPTIONS, isWithinIloilo } from '../utils/iloiloMap.js';
 import ReliableTileLayer from './ReliableTileLayer.jsx';
@@ -31,6 +32,23 @@ function RefreshMapSize() {
   return null;
 }
 
+function usePartnerPin(isFree) {
+  return useMemo(() => L.divIcon({
+    className: 'iloilo-map-pin-wrap',
+    html: `<span class="iloilo-map-pin ${isFree ? 'is-free' : ''}" aria-hidden="true"><svg viewBox="0 0 28 36" role="img"><path d="M14 1C6.82 1 1 6.82 1 14c0 9.25 13 21 13 21s13-11.75 13-21C27 6.82 21.18 1 14 1Z"/><circle cx="14" cy="14" r="5"/></svg></span>`,
+    iconSize: [30, 40], iconAnchor: [15, 38], popupAnchor: [0, -35],
+  }), [isFree]);
+}
+
+function BatchPin({ batch, onSelect }) {
+  const icon = usePartnerPin(Boolean(batch.isDonationOnly));
+  const coordinates = batch.merchantId?.location?.coordinates;
+  if (!coordinates || coordinates.length !== 2 || !isWithinIloilo(coordinates[1], coordinates[0])) return null;
+  return <Marker position={[coordinates[1], coordinates[0]]} icon={icon} eventHandlers={{ click: () => onSelect(batch) }}>
+    <Popup><p className="map-popup-title">{batch.itemName}</p><p className="map-popup-price">{batch.merchantId?.storeName} · {batch.merchantId?.barangay || 'Barangay unspecified'}, {batch.merchantId?.municipality || ''}</p><p className="map-popup-price">{batch.isDonationOnly ? 'Free for verified NGOs' : `₱${Number(batch.price).toFixed(2)}`}</p></Popup>
+  </Marker>;
+}
+
 export default function BatchMap({ batches, onSelect = () => {} }) {
   const [tileError, setTileError] = useState(false); const [tilesReady, setTilesReady] = useState(false); const [mapKey, setMapKey] = useState(0);
   const reportTileStatus = useCallback(status => { setTilesReady(status === 'ready'); setTileError(status === 'error'); }, []);
@@ -40,12 +58,6 @@ export default function BatchMap({ batches, onSelect = () => {} }) {
     <ReliableTileLayer retryKey={mapKey} onStatus={reportTileStatus} />
     <RefreshMapSize />
     <FitBatches batches={batches} />
-    {batches.map(batch => {
-      const coordinates = batch.merchantId?.location?.coordinates;
-      if (!coordinates || coordinates.length !== 2) return null;
-      if (!isWithinIloilo(coordinates[1], coordinates[0])) return null;
-      const point = [coordinates[1], coordinates[0]];
-      return <CircleMarker key={batch._id} center={point} radius={9} pathOptions={{ className: `map-marker ${batch.isDonationOnly ? 'free' : ''}`, color: '#FFFFFF', weight: 2, fillColor: batch.isDonationOnly ? '#D97706' : '#15803D', fillOpacity: 1 }} eventHandlers={{ click: () => onSelect(batch) }}><Popup><p className="map-popup-title">{batch.itemName}</p><p className="map-popup-price">{batch.merchantId?.storeName} · {batch.merchantId?.barangay || 'Barangay unspecified'}, {batch.merchantId?.municipality || ''}</p><p className="map-popup-price">{batch.isDonationOnly ? 'Free for verified NGOs' : `₱${Number(batch.price).toFixed(2)}`}</p></Popup></CircleMarker>;
-    })}
+    {batches.map(batch => <BatchPin key={batch._id} batch={batch} onSelect={onSelect} />)}
   </MapContainer>{!tilesReady && !tileError && <div className="map-tile-status" role="status">Showing Iloilo guide while live streets load…</div>}{tileError && <div className="map-tile-alert" role="alert"><span>Showing the offline Iloilo map. Live streets are temporarily unavailable.</span><button type="button" className="secondary-button compact" onClick={retryTiles}>Retry live map</button></div>}</section>;
 }

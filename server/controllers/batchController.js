@@ -1,4 +1,4 @@
-const cloudinary = require('../config/cloudinary');
+const { uploadImageBuffer } = require('../utils/uploadImage');
 const Batch = require('../models/Batch');
 const { STORAGE_TYPES, CONSUME_WITHIN, ALLERGENS } = require('../models/Batch');
 const User = require('../models/User');
@@ -8,7 +8,8 @@ const { hashIdentifier } = require('../utils/authAudit');
 
 function normalizeDemoPhotoUrl(photoUrl) {
   if (typeof photoUrl !== 'string') return photoUrl;
-  return photoUrl.replace(/^https?:\/\/localhost(?::\d+)?\/demo-images\//i, '/demo-images/');
+  if (/^https?:\/\/(?:localhost|127\.0\.0\.1|0\.0\.0\.0)(?::\d+)?(?:\/|$)/i.test(photoUrl)) return '';
+  return photoUrl;
 }
 
 function parseBatchBody(body) {
@@ -90,30 +91,10 @@ function parseBatchBody(body) {
   };
 }
 
-function uploadImage(buffer) {
-  return new Promise((resolve, reject) => {
-    cloudinary.uploader.upload_stream(
-      { folder: 'salbar-kain/batches', resource_type: 'image', allowed_formats: ['jpg', 'jpeg', 'png', 'webp'] },
-      (error, result) => {
-        if (error) {
-          // Cloudinary's raw error can include credential details; keep the response generic.
-          console.error('Cloudinary image upload failed:', { httpCode: Number(error.http_code) || undefined });
-          return reject(httpError(503, 'IMAGE_UPLOAD_FAILED', 'Image upload failed. Check the Cloudinary credentials configured for the API service, then try again.'));
-        }
-        return resolve(result);
-      },
-    ).end(buffer);
-  });
-}
-
 async function createBatch(req, res) {
   const restockBatchId = typeof req.body?.restockBatchId === 'string' ? req.body.restockBatchId : '';
   const existingPhotoUrl = typeof req.body?.existingPhotoUrl === 'string' ? req.body.existingPhotoUrl.trim() : '';
-  if (existingPhotoUrl && !/^https?:\/\//i.test(existingPhotoUrl)) throw httpError(400, 'INVALID_RESTOCK_PHOTO', 'Only a saved, permanent photo URL can be reused.');
-  const cloudConfig = cloudinary.config();
-  if (req.file && ![cloudConfig.cloud_name, cloudConfig.api_key, cloudConfig.api_secret].every((value) => typeof value === 'string' && value.trim())) {
-    throw httpError(503, 'UPLOAD_NOT_CONFIGURED', 'Cloudinary is not configured on this server.');
-  }
+  if (existingPhotoUrl && !(/^https:\/\//i.test(existingPhotoUrl) || /^data:image\/(?:jpeg|png|webp);base64,/i.test(existingPhotoUrl))) throw httpError(400, 'INVALID_RESTOCK_PHOTO', 'Only a saved, permanent photo can be reused.');
 
   const input = parseBatchBody(req.body);
   const ngoPriorityEnabled = input.ngoPriorityEnabled;
@@ -129,14 +110,14 @@ async function createBatch(req, res) {
       throw httpError(400, 'RESTOCK_PHOTO_MISMATCH', 'The saved photo does not match your selected previous batch. Refresh your inventory and try again.');
     }
   }
-  const uploaded = req.file ? await uploadImage(req.file.buffer) : null;
+  const uploadedPhotoUrl = req.file ? await uploadImageBuffer(req.file, { folder: 'salbar-kain/batches' }) : null;
   try {
     const batch = await Batch.create({
       ...input,
       ngoPriorityUntil: ngoPriorityEnabled && !input.isDonationOnly ? new Date(Date.now() + 15 * 60 * 1000) : null,
       merchantId: req.user.id,
-      photoUrl: uploaded?.secure_url || restockSource?.photoUrl || '/demo-images/pandesal.svg',
-      photoPublicId: uploaded?.public_id || restockSource?.photoPublicId,
+      photoUrl: uploadedPhotoUrl || normalizeDemoPhotoUrl(restockSource?.photoUrl) || '/demo-images/pandesal.svg',
+      photoPublicId: restockSource?.photoPublicId,
     });
     batchCache.flushAll();
     invalidateBatchCache();
@@ -161,7 +142,6 @@ async function createBatch(req, res) {
       },
     });
   } catch (error) {
-    if (uploaded?.public_id) await cloudinary.uploader.destroy(uploaded.public_id, { resource_type: 'image' }).catch(() => {});
     throw error;
   }
 }

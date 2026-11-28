@@ -38,6 +38,8 @@ const userSchema = new Schema({
   rejectionReason: { type: String, trim: true, maxlength: 300, select: false },
   verificationDocPublicId: { type: String, select: false },
   verificationDocFormat: { type: String, select: false },
+  verificationDocDataUrl: { type: String, select: false, default: '' },
+  verificationDocMimeType: { type: String, select: false, default: '' },
   storefrontPhotoUrl: { type: String, trim: true },
   storefrontPhotoPublicId: { type: String, trim: true, select: false },
   contactNumber: { type: String, trim: true, maxlength: 24, default: '' },

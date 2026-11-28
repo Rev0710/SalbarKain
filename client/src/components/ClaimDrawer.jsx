@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react';
 import { getDeviceToken, getGuestProfile, saveGuestProfile } from '../utils/identity.js';
 import { api } from '../utils/api.js';
+import { safeImageUrl } from '../utils/safeImageUrl.js';
 
 const MAX_GUEST_QTY = 5;
 
@@ -70,6 +71,7 @@ export default function ClaimDrawer({ batch, onClose, onSubmit, verifiedNgo = fa
 
   const storageLabel = ({ room_temp_baked: 'Room Temp / Baked Goods', refrigerated_cooked: 'Refrigerated / Cooked Meal' })[batch.storageType] || 'Ask the store about storage';
   const consumeLabel = ({ '2_hours': '2 Hours', tonight: 'Tonight', '24_hours': '24 Hours' })[batch.consumeWithin] || 'Follow the posted pickup cutoff';
+  const storePhotoUrl = safeImageUrl(merchant.storefrontPhotoUrl);
 
   return <div className="overlay" role="presentation" onMouseDown={event => event.target === event.currentTarget && onClose()}>
     <section className="dialog drawer" role="dialog" aria-modal="true" aria-labelledby="claim-title">
@@ -78,8 +80,8 @@ export default function ClaimDrawer({ batch, onClose, onSubmit, verifiedNgo = fa
       <h2 id="claim-title" className="mt-2 text-2xl font-semibold">{batch.isMagicBayong ? 'Surprise Magic Bayong' : batch.itemName}</h2>
       {batch.isMagicBayong && <p className="form-note">Contents / assortment: {batch.itemName}</p>}
       <div className="claim-store-identity">
-        {merchant.storefrontPhotoUrl
-          ? <><img className="store-logo-avatar" src={merchant.storefrontPhotoUrl} alt={`${merchantName} logo`} onError={event => { event.currentTarget.hidden = true; event.currentTarget.nextElementSibling.hidden = false; }} /><span className="store-logo-avatar store-logo-fallback" aria-hidden="true" hidden>{merchantName.trim().charAt(0).toUpperCase()}</span></>
+        {storePhotoUrl
+          ? <><img className="store-logo-avatar" src={storePhotoUrl} alt={`${merchantName} logo`} onError={event => { event.currentTarget.hidden = true; event.currentTarget.nextElementSibling.hidden = false; }} /><span className="store-logo-avatar store-logo-fallback" aria-hidden="true" hidden>{merchantName.trim().charAt(0).toUpperCase()}</span></>
           : <span className="store-logo-avatar store-logo-fallback" aria-hidden="true">{merchantName.trim().charAt(0).toUpperCase()}</span>}
         <div><strong>{merchantName}</strong>{merchantLocation && <span>{merchantLocation}</span>}</div>
       </div>

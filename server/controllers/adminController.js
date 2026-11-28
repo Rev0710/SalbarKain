@@ -58,7 +58,7 @@ function adminSafeUser(user) {
     storefrontPhotoUrl: user.storefrontPhotoUrl, verificationStatus: user.verificationStatus,
     rejectionReason: user.rejectionReason, createdAt: user.createdAt,
     zeroWasteCertified: user.zeroWasteCertified === true,
-    hasVerificationDocument: Boolean(user.verificationDocPublicId),
+    hasVerificationDocument: Boolean(user.verificationDocPublicId || user.verificationDocDataUrl),
   };
 }
 
@@ -122,15 +122,16 @@ async function listVerifications(req, res) {
     : status === 'verified' ? { $or: [{ verificationStatus: 'verified' }, { verified: true }] }
       : { verificationStatus: status };
   const users = await User.find({ role: { $in: ['merchant', 'ngo'] }, ...adminScope(req), ...statusFilter })
-    .select('+verificationDocPublicId +verificationDocFormat +rejectionReason')
+    .select('+verificationDocPublicId +verificationDocFormat +verificationDocDataUrl +verificationDocMimeType +rejectionReason')
     .sort({ createdAt: -1 }).limit(250).lean();
   res.json({ success: true, data: { applicants: users.map(adminSafeUser) } });
 }
 
 async function getVerificationDocument(req, res) {
-  const user = await User.findOne({ _id: req.params.userId, role: { $in: ['merchant', 'ngo'] }, ...adminScope(req) }).select('+verificationDocPublicId +verificationDocFormat').lean();
-  if (!user || !user.verificationDocPublicId) throw httpError(404, 'DOCUMENT_NOT_FOUND', 'This applicant has no verification document in your jurisdiction.');
+  const user = await User.findOne({ _id: req.params.userId, role: { $in: ['merchant', 'ngo'] }, ...adminScope(req) }).select('+verificationDocPublicId +verificationDocFormat +verificationDocDataUrl').lean();
+  if (!user || (!user.verificationDocPublicId && !user.verificationDocDataUrl)) throw httpError(404, 'DOCUMENT_NOT_FOUND', 'This applicant has no verification document in your jurisdiction.');
   try {
+    if (user.verificationDocDataUrl) return res.set('Cache-Control', 'private, no-store').json({ success: true, data: { url: user.verificationDocDataUrl, expiresInSeconds: null } });
     const url = cloudinary.utils.private_download_url(user.verificationDocPublicId, user.verificationDocFormat || 'pdf', {
       resource_type: 'raw', type: 'private', expires_at: Math.floor(Date.now() / 1000) + 300,
     });
@@ -148,9 +149,9 @@ async function reviewVerification(req, res) {
   const rejectionReason = decision === 'reject' ? reason : '';
   const filter = { _id: req.params.userId, role: { $in: ['merchant', 'ngo'] }, ...adminScope(req) };
   if (decision === 'approve') {
-    const application = await User.findOne(filter).select('+verificationDocPublicId').lean();
+    const application = await User.findOne(filter).select('+verificationDocPublicId +verificationDocDataUrl').lean();
     if (!application) throw httpError(404, 'APPLICANT_NOT_FOUND', 'Partner application was not found in your jurisdiction.');
-    if (!application.verificationDocPublicId) throw httpError(409, 'VERIFICATION_DOCUMENT_REQUIRED', 'A verification image or document must be on file before approval.');
+    if (!application.verificationDocPublicId && !application.verificationDocDataUrl) throw httpError(409, 'VERIFICATION_DOCUMENT_REQUIRED', 'A verification image or document must be on file before approval.');
   }
   const status = decision === 'approve' ? 'verified' : decision === 'reject' ? 'rejected' : 'suspended';
   const now = new Date();

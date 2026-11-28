@@ -1,8 +1,11 @@
 import { useEffect, useRef, useState } from 'react';
 import { TileLayer } from 'react-leaflet';
 
-// The standard keyless OpenStreetMap tile service is used for the live layer.
 const TILE_PROVIDERS = [
+  {
+    url: 'https://server.arcgisonline.com/ArcGIS/rest/services/World_Street_Map/MapServer/tile/{z}/{y}/{x}',
+    attribution: 'Tiles &copy; Esri &mdash; OpenStreetMap contributors',
+  },
   {
     url: 'https://tile.openstreetmap.org/{z}/{x}/{y}.png',
     attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors',
@@ -25,9 +28,7 @@ export default function ReliableTileLayer({ onStatus, retryKey = 0 }) {
     tileCounts.current = { loaded: 0, failed: 0 };
     failedOver.current = false;
     setStatus('loading');
-    const timeout = window.setTimeout(() => {
-      if (tileCounts.current.loaded === 0) advanceProvider();
-    }, 8000);
+    const timeout = window.setTimeout(() => { if (tileCounts.current.loaded === 0) advanceProvider(); }, 8000);
     return () => window.clearTimeout(timeout);
     // Provider changes start a new tile request batch.
     // eslint-disable-next-line react-hooks/exhaustive-deps

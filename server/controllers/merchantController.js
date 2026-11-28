@@ -1,4 +1,5 @@
 const cloudinary = require('../config/cloudinary');
+const { uploadImageBuffer } = require('../utils/uploadImage');
 const mongoose = require('mongoose');
 const User = require('../models/User');
 const Batch = require('../models/Batch');
@@ -12,19 +13,6 @@ function cleanProfilePart(value) {
   return typeof value === 'string'
     ? value.replace(/\bunspecified\b/gi, '').replace(/[\s,·-]+/g, ' ').trim()
     : '';
-}
-
-function uploadStorefront(buffer) {
-  return new Promise((resolve, reject) => cloudinary.uploader.upload_stream(
-    { folder: 'salbarkain/storefronts', resource_type: 'image', allowed_formats: ['jpg', 'jpeg', 'png', 'webp'] },
-    (error, result) => {
-      if (error) {
-        console.error('Storefront upload failed:', { httpCode: Number(error.http_code) || undefined });
-        return reject(httpError(503, 'STOREFRONT_UPLOAD_FAILED', 'Storefront photo upload failed. Check Cloudinary settings and try again.'));
-      }
-      resolve(result);
-    },
-  ).end(buffer));
 }
 
 function profileFields(user) {
@@ -43,13 +31,13 @@ function profileFields(user) {
     verificationDocUrl: user.verificationDocPublicId && user.verificationDocFormat
       ? cloudinary.utils.private_download_url(user.verificationDocPublicId, user.verificationDocFormat, {
         resource_type: 'raw', type: 'private', expires_at: Math.floor(Date.now() / 1000) + 300,
-      }) : '',
+      }) : user.verificationDocDataUrl || '',
   };
 }
 
 async function getMerchantProfile(req, res) {
   const user = await User.findOne({ _id: req.user.id, role: 'merchant' })
-    .select('+verificationDocPublicId +verificationDocFormat')
+    .select('+verificationDocPublicId +verificationDocFormat +verificationDocDataUrl')
     .populate('verifiedBy', 'name assignedMunicipality')
     .lean();
   if (!user) throw httpError(404, 'MERCHANT_NOT_FOUND', 'Merchant account was not found.');
@@ -95,27 +83,19 @@ async function updateMerchantProfile(req, res) {
     update.defaultAllergens = allergens;
   }
 
-  const cloudConfig = cloudinary.config();
-  if (req.file && ![cloudConfig.cloud_name, cloudConfig.api_key, cloudConfig.api_secret].every(value => typeof value === 'string' && value.trim())) {
-    throw httpError(503, 'UPLOAD_NOT_CONFIGURED', 'Cloudinary is not configured on this server.');
-  }
-  const uploaded = req.file ? await uploadStorefront(req.file.buffer) : null;
+  const uploadedUrl = req.file ? await uploadImageBuffer(req.file, { folder: 'salbarkain/storefronts' }) : null;
   const oldPublicId = user.storefrontPhotoPublicId;
-  if (uploaded) {
-    update.storefrontPhotoUrl = uploaded.secure_url;
-    update.storefrontPhotoPublicId = uploaded.public_id;
-  }
+  if (uploadedUrl) { update.storefrontPhotoUrl = uploadedUrl; update.storefrontPhotoPublicId = undefined; }
   try {
     Object.assign(user, update);
     await user.save();
   } catch (error) {
-    if (uploaded?.public_id) await cloudinary.uploader.destroy(uploaded.public_id, { resource_type: 'image' }).catch(() => {});
     throw error;
   }
-  if (uploaded && oldPublicId) await cloudinary.uploader.destroy(oldPublicId, { resource_type: 'image' }).catch(() => {});
+  if (uploadedUrl && oldPublicId) await cloudinary.uploader.destroy(oldPublicId, { resource_type: 'image' }).catch(() => {});
   batchCache.flushAll();
   invalidateBatchCache();
-  const refreshed = await User.findById(user._id).select('+verificationDocPublicId +verificationDocFormat').populate('verifiedBy', 'name assignedMunicipality').lean();
+  const refreshed = await User.findById(user._id).select('+verificationDocPublicId +verificationDocFormat +verificationDocDataUrl').populate('verifiedBy', 'name assignedMunicipality').lean();
   let profile;
   try { profile = profileFields(refreshed); } catch { throw httpError(503, 'DOCUMENT_UNAVAILABLE', 'The permit link could not be created right now.'); }
   const sessionUser = {

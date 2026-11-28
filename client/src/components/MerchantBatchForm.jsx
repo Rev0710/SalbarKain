@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react';
 import imageCompression from 'browser-image-compression';
+import { safeImageUrl } from '../utils/safeImageUrl.js';
 
 const ALLERGENS = ['None / Allergen-Free', 'Shrimp / Seafood', 'Peanuts / Tree Nuts', 'Dairy', 'Eggs', 'Gluten / Wheat', 'Pork (Non-Halal)'];
 function localDateTime(value) { const offset = value.getTimezoneOffset() * 60000; return new Date(value.getTime() - offset).toISOString().slice(0, 16); }
@@ -7,6 +8,8 @@ function localDateTime(value) { const offset = value.getTimezoneOffset() * 60000
 function validPreviewUrl(value) {
   if (typeof value !== 'string' || !value.trim()) return false;
   if (value.startsWith('blob:')) return true;
+  if (/^data:image\/(?:jpeg|png|webp);base64,/i.test(value)) return true;
+  if (!safeImageUrl(value)) return false;
   try {
     const url = new URL(value, window.location.origin);
     return ['http:', 'https:'].includes(url.protocol) && (value.startsWith('/') || Boolean(url.hostname));
@@ -44,12 +47,12 @@ export default function MerchantBatchForm({ onCreated, onNotice, disabled = fals
     setItemName(restockBatch.itemName || ''); setPrice(restockBatch.price == null ? '' : String(restockBatch.price)); setDonation(Boolean(restockBatch.isDonationOnly));
     setStorageType(restockBatch.storageType || 'room_temp_baked'); setConsumeWithin(restockBatch.consumeWithin || 'tonight'); setAllergens(restockBatch.allergens?.length ? restockBatch.allergens : ['None / Allergen-Free']);
     const nextCutoff = closingCutoff(storeProfile?.defaultClosingTime || '20:30'); setExpiresAt(nextCutoff); setSafeUntil(localDateTime(new Date(new Date(nextCutoff).getTime() + 2 * 60 * 60 * 1000)));
-    setNgoPriorityEnabled(false); setPhoto(null); setExistingPhotoUrl(restockBatch.photoUrl || ''); setError(''); setExpiryEdited(false);
+    setNgoPriorityEnabled(false); setPhoto(null); setExistingPhotoUrl(safeImageUrl(restockBatch.photoUrl) || ''); setError(''); setExpiryEdited(false);
     setFlashDrop(false); setMagicBayong(false); setOriginalPrice(''); setRetailValue(''); setFreshnessAttested(false); setKeyIngredients(restockBatch.keyIngredients || '');
   }, [restockBatch]);
 
   useEffect(() => {
-    if (!photo) { setPreview(previewUrl || restockBatch?.photoUrl || ''); return undefined; }
+    if (!photo) { setPreview((validPreviewUrl(previewUrl) ? previewUrl : '') || (validPreviewUrl(restockBatch?.photoUrl) ? restockBatch.photoUrl : '')); return undefined; }
     const url = URL.createObjectURL(photo); setPreview(url); return () => URL.revokeObjectURL(url);
   }, [photo, restockBatch?.photoUrl, previewUrl]);
 

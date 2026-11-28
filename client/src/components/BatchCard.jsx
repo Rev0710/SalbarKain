@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react';
 import { formatTimeLeft } from '../utils/time.js';
+import { safeImageUrl } from '../utils/safeImageUrl.js';
 
 export default function BatchCard({ batch, isNgo, distanceLabel = '', onClaim, onSignIn, onReport }) {
   const [now, setNow] = useState(Date.now());
@@ -16,12 +17,14 @@ export default function BatchCard({ batch, isNgo, distanceLabel = '', onClaim, o
   const barangay = String(batch.merchantId?.barangay || '').replace(/\bunspecified\b/gi, '').trim();
   const municipality = String(batch.merchantId?.municipality || '').replace(/\bunspecified\b/gi, '').trim();
   const merchantLocation = barangay || municipality || 'Iloilo Province';
+  const photoUrl = safeImageUrl(batch.photoUrl) || '/demo-images/pandesal.svg';
+  const storePhotoUrl = safeImageUrl(batch.merchantId?.storefrontPhotoUrl);
   return <article className="batch-card">
-    <img className="batch-card-photo" src={batch.photoUrl} alt={batch.itemName} loading="lazy" onError={event => { event.currentTarget.onerror = null; event.currentTarget.src = '/demo-images/pandesal.svg'; }} />
+    <img className="batch-card-photo" src={photoUrl} alt={batch.itemName} loading="lazy" onError={event => { event.currentTarget.onerror = null; event.currentTarget.src = '/demo-images/pandesal.svg'; }} />
     <div className="batch-card-info">
       <div className="batch-item"><h2 title={batch.itemName}>{batch.isMagicBayong ? 'Surprise Magic Bayong' : batch.itemName}</h2><p className="batch-merchant-line" title={`${batch.merchantId?.storeName || 'Local food partner'} · ${merchantLocation}${distanceLabel ? ` · ${distanceLabel}` : ''}`}>
-        {batch.merchantId?.storefrontPhotoUrl
-          ? <><img className="store-logo-avatar" src={batch.merchantId.storefrontPhotoUrl} alt="" loading="lazy" onError={event => { event.currentTarget.hidden = true; event.currentTarget.nextElementSibling.hidden = false; }} /><span className="store-logo-avatar store-logo-fallback" aria-hidden="true" hidden>{(batch.merchantId?.storeName || 'L').trim().charAt(0).toUpperCase()}</span></>
+        {storePhotoUrl
+          ? <><img className="store-logo-avatar" src={storePhotoUrl} alt="" loading="lazy" onError={event => { event.currentTarget.hidden = true; event.currentTarget.nextElementSibling.hidden = false; }} /><span className="store-logo-avatar store-logo-fallback" aria-hidden="true" hidden>{(batch.merchantId?.storeName || 'L').trim().charAt(0).toUpperCase()}</span></>
           : <span className="store-logo-avatar store-logo-fallback" aria-hidden="true">{(batch.merchantId?.storeName || 'L').trim().charAt(0).toUpperCase()}</span>}
         <span>{batch.merchantId?.storeName || 'Local food partner'}</span>
         <span className="merchant-rating-pill">{Number(batch.merchantId?.totalReviews) > 0 ? <>★ {Number(batch.merchantId.averageRating || 0).toFixed(1)} ({batch.merchantId.totalReviews})</> : 'New Partner'}</span>
