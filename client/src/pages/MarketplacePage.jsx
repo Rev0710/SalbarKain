@@ -43,7 +43,7 @@ function formatDistance(km) {
   return `${km.toFixed(1)} km away`;
 }
 
-export default function MarketplacePage({ session, activeClaim = null, onShowPickupPass, onClaim, onPartnerSignIn, onNotice, refreshTrigger = 0 }) {
+export default function MarketplacePage({ session, onClaim, onPartnerSignIn, onNotice, refreshTrigger = 0 }) {
   const navigate = useNavigate();
   const [batches, setBatches] = useState([]); const [partners, setPartners] = useState([]); const [partnerError, setPartnerError] = useState(''); const [filter, setFilter] = useState('All'); const [municipality, setMunicipality] = useState('All Iloilo'); const [loading, setLoading] = useState(true); const [partnersLoading, setPartnersLoading] = useState(true); const [error, setError] = useState(''); const [isRefreshing, setIsRefreshing] = useState(false); const [pullState, setPullState] = useState('idle'); const [selected, setSelected] = useState(null);
   const touchStartY = useRef(null);
@@ -196,7 +196,6 @@ export default function MarketplacePage({ session, activeClaim = null, onShowPic
   function resetFilters() { setFilter('All'); setMunicipality('All Iloilo'); }
   function postSurplus() { if (session?.role === 'merchant') navigate('/workspace'); else onPartnerSignIn(); }
   return <main className="market-shell" onTouchStart={onTouchStart} onTouchMove={onTouchMove} onTouchEnd={onTouchEnd} onTouchCancel={onTouchCancel}>
-    {activeClaim && <div className="active-pickup-reminder" role="status"><p><strong>Active Pickup Pass ({activeClaim.qrToken})</strong><span> — {Number(activeClaim.quantity || activeClaim.qty || 1)}x {activeClaim.itemName || 'surplus batch'} at {activeClaim.storeName || 'food partner'}</span></p><button type="button" onClick={onShowPickupPass}>Show QR Code</button></div>}
     {pullState !== 'idle' && <div className="pull-refresh-indicator" role="status" aria-live="polite">{isRefreshing && <span className="market-refresh-icon animate-spin" aria-hidden="true">↻</span>}{isRefreshing ? 'Updating Iloilo listings...' : pullState === 'ready' ? 'Release to refresh live surplus...' : 'Pull down to refresh live surplus...'}</div>}
     {offline && <div className="alert-banner mb-4" role="alert">You’re offline. Reconnect to refresh batches and make a pickup reservation.</div>}
     <div className="market-heading">

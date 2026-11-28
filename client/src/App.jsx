@@ -197,7 +197,6 @@ function AppShell() {
               <button type="button" onClick={() => { setMobileMenuOpen(false); setImpactOpen(true); }}>My impact</button>
               <button className="primary-button" type="button" onClick={() => { setMobileMenuOpen(false); setLoginOpen(true); }}>Merchant / NGO login</button>
             </>}
-            {showActivePass && <button type="button" onClick={() => { setMobileMenuOpen(false); openSavedPass(); }}>My Active QR Pass · {savedPass.qrToken}</button>}
           </nav>}
         </div>
       </div>
@@ -205,7 +204,6 @@ function AppShell() {
     <div className="app-main flex-1 pb-20">
       {view === 'activate-lgu' ? <Suspense fallback={<main className="dashboard-shell"><p className="loading-line">Opening secure activation…</p></main>}><ActivateLguPage onActivated={handleLogin} onGoToLogin={() => navigate('/login')} /></Suspense> : view === 'admin' ? session?.role === 'admin' ? <Suspense fallback={<main className="dashboard-shell"><p className="loading-line">Opening the admin command center…</p></main>}><AdminQueue session={session} onNotice={setNotice} /></Suspense> : <main className="dashboard-shell"><section className="panel"><h1>Admin access required</h1><p className="panel-subtitle">Sign in with an administrator account to open this command center.</p><button className="primary-button" onClick={() => setLoginOpen(true)}>Sign in</button></section></main> : view === 'dashboard' && session ? <Suspense fallback={<main className="dashboard-shell"><p className="loading-line">Opening your partner workspace…</p></main>}><PartnerDashboardPage session={session} onBrowse={() => navigate('/')} onNotice={setNotice} onSavePass={savePass} onPassStatusChange={handlePickupStatusChange} onSessionUpdate={handleSessionProfileUpdate} /></Suspense> : view === 'how' ? <HowItWorksPage /> : view === 'about' ? <AboutPage /> : <MarketplacePage session={session} activeClaim={showActivePass ? savedPass : null} onShowPickupPass={openSavedPass} onClaim={setClaimBatch} onPartnerSignIn={() => setLoginOpen(true)} onNotice={setNotice} refreshTrigger={marketRefresh} />}
     </div>
-    {showActivePass && <button type="button" className="active-pass-fab" onClick={openSavedPass}>My Active QR Pass</button>}
     <RescueToast />
     <Footer />
     {loginOpen && <AuthPage onClose={() => setLoginOpen(false)} onLogin={handleLogin} />}
