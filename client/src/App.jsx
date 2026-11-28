@@ -24,17 +24,19 @@ function readPickupPass() {
   try {
     const pass = JSON.parse(localStorage.getItem(PICKUP_PASS_KEY) || localStorage.getItem(LEGACY_PICKUP_PASS_KEY) || 'null');
     const deadline = new Date(pass?.pickupDeadline).getTime();
-    if (!pass?.qrToken || !Number.isFinite(deadline) || deadline <= Date.now()) {
+    if (!pass?.qrToken) return null;
+    if (['completed', 'expired', 'recalled', 'cancelled'].includes(pass.status) || (Number.isFinite(deadline) && deadline <= Date.now())) {
       localStorage.removeItem(PICKUP_PASS_KEY);
       localStorage.removeItem(LEGACY_PICKUP_PASS_KEY);
       return null;
     }
+    pass.status ||= 'pending';
     localStorage.setItem(PICKUP_PASS_KEY, JSON.stringify(pass));
     return pass;
   } catch { return null; }
 }
 
-function MealsSavedCounter() {
+function MealsSavedCounter({ className = '' }) {
   const [impact, setImpact] = useState({ mealsSaved: 0, foodDivertedKg: 0, co2PreventedKg: 0 });
   useEffect(() => {
     let alive = true;
@@ -55,7 +57,11 @@ function MealsSavedCounter() {
     return () => { alive = false; window.clearInterval(timer); };
   }, []);
   const format = value => new Intl.NumberFormat('en-PH', { maximumFractionDigits: 1 }).format(value);
-  return <div className="impact-counter" role="status" title={`Total food rescued across Iloilo (${format(impact.co2PreventedKg)} kg CO₂e prevented)`} aria-label={`Total food rescued across Iloilo: ${format(impact.mealsSaved)} rescued, ${format(impact.foodDivertedKg)} kilograms`}><span className="impact-pill-dot" aria-hidden="true" /><span className="impact-pill-text">{format(impact.mealsSaved)} Rescued · {format(impact.foodDivertedKg)} kg</span></div>;
+  return <div className={`impact-counter ${className}`} role="status" title={`Total food rescued across Iloilo (${format(impact.co2PreventedKg)} kg CO₂e prevented)`} aria-label={`Total food rescued across Iloilo: ${format(impact.mealsSaved)} rescued, ${format(impact.foodDivertedKg)} kilograms`}><span className="impact-pill-dot" aria-hidden="true" /><span className="impact-pill-text">{format(impact.mealsSaved)} Rescued · {format(impact.foodDivertedKg)} kg</span></div>;
+}
+
+function QrCodeIcon() {
+  return <svg className="active-pass-qr-icon" viewBox="0 0 24 24" fill="none" aria-hidden="true"><path d="M3.5 3.5h7v7h-7zM13.5 3.5h7v7h-7zM3.5 13.5h7v7h-7zM13.5 13.5h2v2h-2zM18.5 13.5h2v2h-2zM13.5 18.5h2v2h-2zM17.5 17.5h3v3h-3z" stroke="currentColor" strokeWidth="1.7" strokeLinejoin="round" /></svg>;
 }
 
 function AppShell() {
@@ -72,7 +78,7 @@ function AppShell() {
       setSavedPass(current => {
         if (!current) return current;
         const deadline = new Date(current.pickupDeadline).getTime();
-        if (Number.isFinite(deadline) && deadline > Date.now()) return current;
+        if (!Number.isFinite(deadline) || deadline > Date.now()) return current;
         localStorage.removeItem(PICKUP_PASS_KEY);
         localStorage.removeItem(LEGACY_PICKUP_PASS_KEY);
         return null;
@@ -80,6 +86,38 @@ function AppShell() {
     }, 1000);
     return () => window.clearInterval(timer);
   }, []);
+  useEffect(() => {
+    const token = savedPass?.qrToken;
+    if (!token) return undefined;
+    let active = true;
+    const verifyCachedPass = async () => {
+      const deadline = new Date(savedPass.pickupDeadline).getTime();
+      if (Number.isFinite(deadline) && deadline <= Date.now()) {
+        if (active) handlePickupStatusChange({ status: 'expired' });
+        return;
+      }
+      if (!navigator.onLine) return;
+      try {
+        const { data } = await api.get(`/claims/${encodeURIComponent(token)}/status`);
+        if (!active) return;
+        const status = data?.data?.status;
+        if (['completed', 'expired', 'recalled'].includes(status)) {
+          handlePickupStatusChange({ status });
+        } else if (status === 'pending') {
+          setSavedPass(current => {
+            if (!current || current.qrToken !== token || current.status === status) return current;
+            const next = { ...current, status };
+            localStorage.setItem(PICKUP_PASS_KEY, JSON.stringify(next));
+            return next;
+          });
+        }
+      } catch { /* Keep the saved pass available while the buyer is offline or the server is waking. */ }
+    };
+    void verifyCachedPass();
+    const timer = window.setInterval(verifyCachedPass, 15_000);
+    window.addEventListener('online', verifyCachedPass);
+    return () => { active = false; window.clearInterval(timer); window.removeEventListener('online', verifyCachedPass); };
+  }, [savedPass?.qrToken, savedPass?.pickupDeadline]);
   function handleLogin(data) { const next = { ...data.user, token: data.token }; api.defaults.headers.common.Authorization = `Bearer ${next.token}`; localStorage.setItem('salbarkain:auth', JSON.stringify(next)); setSession(next); setLoginOpen(false); setMobileMenuOpen(false); navigate(next.role === 'admin' ? '/admin' : '/workspace'); }
   function handleSessionProfileUpdate(profile) {
     setSession(current => {
@@ -93,6 +131,7 @@ function AppShell() {
   function logout() { delete api.defaults.headers.common.Authorization; localStorage.removeItem('salbarkain:auth'); setSession(null); setMobileMenuOpen(false); setLogoutConfirmOpen(false); navigate('/'); }
   function handlePickupStatusChange(result) {
     if (!['completed', 'expired', 'cancelled', 'recalled'].includes(result?.status)) return;
+    if (result?.qrToken && savedPass?.qrToken && result.qrToken !== savedPass.qrToken) return;
     localStorage.removeItem(PICKUP_PASS_KEY);
     localStorage.removeItem(LEGACY_PICKUP_PASS_KEY);
     setSavedPass(null);
@@ -116,8 +155,10 @@ function AppShell() {
       throw error;
     }
   }
-  function savePass(pass) { localStorage.setItem(PICKUP_PASS_KEY, JSON.stringify(pass)); localStorage.removeItem(LEGACY_PICKUP_PASS_KEY); setSavedPass(pass); }
-  return <div className="app-frame min-h-screen flex flex-col bg-[#F8FAFC]">
+  function savePass(pass) { const activePass = { ...pass, status: pass.status || 'pending' }; localStorage.setItem(PICKUP_PASS_KEY, JSON.stringify(activePass)); localStorage.removeItem(LEGACY_PICKUP_PASS_KEY); setSavedPass(activePass); }
+  const showActivePass = Boolean(savedPass?.qrToken && savedPass.status === 'pending' && Number.isFinite(new Date(savedPass.pickupDeadline).getTime()) && new Date(savedPass.pickupDeadline).getTime() > Date.now());
+  const openSavedPass = () => { if (showActivePass) setPickupPass(savedPass); };
+  return <div className={`app-frame min-h-screen flex flex-col bg-[#F8FAFC] ${showActivePass ? 'has-active-pass' : ''}`}>
     <header className="site-header">
       <div className="nav-inner">
         <Link className="brand" to="/">SalbarKain<span>.</span></Link>
@@ -128,6 +169,7 @@ function AppShell() {
         </nav>
         <div className="header-actions">
           <MealsSavedCounter />
+          {showActivePass && <button type="button" className="active-pass-nav" onClick={openSavedPass} aria-label={`Reopen active pickup pass ${savedPass.qrToken}`} title="Reopen your active pickup QR pass"><QrCodeIcon /><span>Active QR Pass · {savedPass.qrToken}</span></button>}
           <button className="text-button" onClick={() => setImpactOpen(true)}>My impact</button>
           {session ? <>
             <Link className="header-role-link" to={session.role === 'admin' ? '/admin' : '/workspace'}>
@@ -138,7 +180,8 @@ function AppShell() {
           </> : <button className="primary-button compact" onClick={() => setLoginOpen(true)}>Merchant / NGO login</button>}
         </div>
         <div className="mobile-count">
-          <MealsSavedCounter />
+          <MealsSavedCounter className={showActivePass ? 'mobile-impact-hidden-when-pass' : ''} />
+          {showActivePass && <button type="button" className="active-pass-nav active-pass-nav-mobile" onClick={openSavedPass} aria-label={`Active QR Pass · ${savedPass.qrToken}. Reopen pickup pass`} title="Reopen your active pickup QR pass"><QrCodeIcon /><span className="active-pass-label-long">Active QR Pass · {savedPass.qrToken}</span><span className="active-pass-label-short">Active QR · {savedPass.qrToken}</span></button>}
           <button type="button" className="mobile-menu-toggle" aria-expanded={mobileMenuOpen} aria-controls="mobile-navigation" aria-label={mobileMenuOpen ? 'Close navigation menu' : 'Open navigation menu'} onClick={() => setMobileMenuOpen(open => !open)}>
             <svg viewBox="0 0 24 24" aria-hidden="true"><path d={mobileMenuOpen ? 'M6 6l12 12M18 6L6 18' : 'M4 6h16M4 12h16M4 18h16'} /></svg>
           </button>
@@ -154,15 +197,15 @@ function AppShell() {
               <button type="button" onClick={() => { setMobileMenuOpen(false); setImpactOpen(true); }}>My impact</button>
               <button className="primary-button" type="button" onClick={() => { setMobileMenuOpen(false); setLoginOpen(true); }}>Merchant / NGO login</button>
             </>}
-            {savedPass && <button type="button" onClick={() => { setMobileMenuOpen(false); setPickupPass(savedPass); }}>My Active QR Pass</button>}
+            {showActivePass && <button type="button" onClick={() => { setMobileMenuOpen(false); openSavedPass(); }}>My Active QR Pass · {savedPass.qrToken}</button>}
           </nav>}
         </div>
       </div>
     </header>
     <div className="app-main flex-1 pb-20">
-      {view === 'activate-lgu' ? <Suspense fallback={<main className="dashboard-shell"><p className="loading-line">Opening secure activation…</p></main>}><ActivateLguPage onActivated={handleLogin} onGoToLogin={() => navigate('/login')} /></Suspense> : view === 'admin' ? session?.role === 'admin' ? <Suspense fallback={<main className="dashboard-shell"><p className="loading-line">Opening the admin command center…</p></main>}><AdminQueue session={session} onNotice={setNotice} /></Suspense> : <main className="dashboard-shell"><section className="panel"><h1>Admin access required</h1><p className="panel-subtitle">Sign in with an administrator account to open this command center.</p><button className="primary-button" onClick={() => setLoginOpen(true)}>Sign in</button></section></main> : view === 'dashboard' && session ? <Suspense fallback={<main className="dashboard-shell"><p className="loading-line">Opening your partner workspace…</p></main>}><PartnerDashboardPage session={session} onBrowse={() => navigate('/')} onNotice={setNotice} onSavePass={savePass} onPassStatusChange={handlePickupStatusChange} onSessionUpdate={handleSessionProfileUpdate} /></Suspense> : view === 'how' ? <HowItWorksPage /> : view === 'about' ? <AboutPage /> : <MarketplacePage session={session} onClaim={setClaimBatch} onPartnerSignIn={() => setLoginOpen(true)} onNotice={setNotice} refreshTrigger={marketRefresh} />}
+      {view === 'activate-lgu' ? <Suspense fallback={<main className="dashboard-shell"><p className="loading-line">Opening secure activation…</p></main>}><ActivateLguPage onActivated={handleLogin} onGoToLogin={() => navigate('/login')} /></Suspense> : view === 'admin' ? session?.role === 'admin' ? <Suspense fallback={<main className="dashboard-shell"><p className="loading-line">Opening the admin command center…</p></main>}><AdminQueue session={session} onNotice={setNotice} /></Suspense> : <main className="dashboard-shell"><section className="panel"><h1>Admin access required</h1><p className="panel-subtitle">Sign in with an administrator account to open this command center.</p><button className="primary-button" onClick={() => setLoginOpen(true)}>Sign in</button></section></main> : view === 'dashboard' && session ? <Suspense fallback={<main className="dashboard-shell"><p className="loading-line">Opening your partner workspace…</p></main>}><PartnerDashboardPage session={session} onBrowse={() => navigate('/')} onNotice={setNotice} onSavePass={savePass} onPassStatusChange={handlePickupStatusChange} onSessionUpdate={handleSessionProfileUpdate} /></Suspense> : view === 'how' ? <HowItWorksPage /> : view === 'about' ? <AboutPage /> : <MarketplacePage session={session} activeClaim={showActivePass ? savedPass : null} onShowPickupPass={openSavedPass} onClaim={setClaimBatch} onPartnerSignIn={() => setLoginOpen(true)} onNotice={setNotice} refreshTrigger={marketRefresh} />}
     </div>
-    {savedPass && <button type="button" className="active-pass-fab" onClick={() => setPickupPass(savedPass)}>My Active QR Pass</button>}
+    {showActivePass && <button type="button" className="active-pass-fab" onClick={openSavedPass}>My Active QR Pass</button>}
     <RescueToast />
     <Footer />
     {loginOpen && <AuthPage onClose={() => setLoginOpen(false)} onLogin={handleLogin} />}

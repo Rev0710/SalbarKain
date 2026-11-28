@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react';
 import { getDeviceToken, getGuestProfile, saveGuestProfile } from '../utils/identity.js';
 import { api } from '../utils/api.js';
 import { safeImageUrl } from '../utils/safeImageUrl.js';
+import { getEffectiveUnitPrice, isFlashDropActive } from '../utils/pricing.js';
 
 const MAX_GUEST_QTY = 5;
 
@@ -19,8 +20,8 @@ export default function ClaimDrawer({ batch, onClose, onSubmit, verifiedNgo = fa
   const isNgo = Boolean(verifiedNgo || batch.verifiedNgo);
   const remaining = Math.max(0, Number(batch.remainingQty) || 0);
   const maxQty = isNgo ? remaining : Math.min(remaining, MAX_GUEST_QTY);
-  const flashActive = Boolean(batch.isFlashDropEnabled && new Date(batch.expiresAt).getTime() - now <= 30 * 60 * 1000);
-  const unitPrice = donationOnly || (flashActive && isNgo) ? 0 : flashActive ? Number((Number(batch.price || 0) * 0.5).toFixed(2)) : Number(batch.price || 0);
+  const flashActive = isFlashDropActive(batch, now);
+  const unitPrice = getEffectiveUnitPrice(batch, now, { verifiedNgo: isNgo });
   const orderTotal = Number((unitPrice * qty).toFixed(2));
   const priorityActive = Boolean(batch.ngoPriorityUntil && new Date(batch.ngoPriorityUntil).getTime() > now);
   const ngoReserved = Boolean((donationOnly || priorityActive) && !isNgo);
@@ -59,7 +60,7 @@ export default function ClaimDrawer({ batch, onClose, onSubmit, verifiedNgo = fa
       await onSubmit({ buyerName: name.trim(), phone: phone.trim(), qty: Number(qty), quantity: Number(qty), safetyAcknowledged, deviceToken: getDeviceToken() });
     } catch (submitError) {
       const code = submitError.response?.data?.code;
-      setError(['BATCH_UNAVAILABLE', 'PICKUP_PASS_EXPIRED', 'BATCH_EXPIRED'].includes(code)
+      setError(['BATCH_UNAVAILABLE', 'PICKUP_PASS_EXPIRED', 'BATCH_EXPIRED', 'BATCH_RECALLED'].includes(code)
         ? 'This batch just sold out or its safe pickup window ended. Choose another available batch.'
         : submitError.response?.data?.message || 'We could not reserve that batch. Please try again.');
     } finally { setBusy(false); }
@@ -86,6 +87,7 @@ export default function ClaimDrawer({ batch, onClose, onSubmit, verifiedNgo = fa
         <div><strong>{merchantName}</strong>{merchantLocation && <span>{merchantLocation}</span>}</div>
       </div>
       <p className="claim-price-line">{donationOnly || (flashActive && isNgo) ? 'Free for verified NGOs' : `₱${unitPrice.toFixed(2)} per pack`}{flashActive && !donationOnly && <span className="flash-badge ml-2">Flash Drop</span>}</p>
+      {Number(batch.verifiedSpoilageFlags) === 1 && <p className="verified-spoilage-warning" role="status">⚠ 1 Verified Spoilage Report · LGU Reviewing</p>}
       {batch.merchantId?.averageRating > 0 && <p className="merchant-rating-pill">★ {Number(batch.merchantId.averageRating).toFixed(1)} · {batch.merchantId.totalReviews || 0} verified reviews</p>}
       {merchantReviews.length > 0 && <section className="public-merchant-reviews" aria-label="Recent verified buyer reviews"><h3>Recent verified reviews</h3>{merchantReviews.map(review => <article key={review.id}><div><strong>{review.buyerFirstName}</strong><span className="merchant-review-stars" aria-label={`${review.rating} out of 5 stars`}>{'★'.repeat(review.rating)}</span></div>{review.reviewComment && <p>{review.reviewComment}</p>}</article>)}</section>}
       {batch.isMagicBayong && <p className="form-note">Mixed end-of-night leftovers · estimated retail value ₱{Number(batch.retailValue || 0).toFixed(2)}</p>}

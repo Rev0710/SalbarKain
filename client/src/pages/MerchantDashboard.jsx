@@ -240,6 +240,9 @@ export default function MerchantDashboard({ session, onBrowse, onNotice, onSessi
   const [reviewsData, setReviewsData] = useState({ averageRating: 0, totalReviews: 0, reviews: [] });
   const [reviewsLoading, setReviewsLoading] = useState(false);
   const [reviewsError, setReviewsError] = useState('');
+  const [handoffHistory, setHandoffHistory] = useState([]);
+  const [historyError, setHistoryError] = useState('');
+  const [historyLoading, setHistoryLoading] = useState(false);
   const isVerified = session.verificationStatus === 'verified' || session.verified === true;
 
   const reloadBatches = useCallback(async () => {
@@ -293,6 +296,12 @@ export default function MerchantDashboard({ session, onBrowse, onNotice, onSessi
     } catch (err) { setReviewsError(err.response?.data?.message || 'Customer reviews could not load.'); }
     finally { setReviewsLoading(false); }
   }, []);
+  const reloadHandoffHistory = useCallback(async () => {
+    setHistoryLoading(true);
+    try { const { data } = await api.get('/claims/merchant-history'); setHandoffHistory(Array.isArray(data?.data?.claims) ? data.data.claims : []); setHistoryError(''); }
+    catch (err) { setHistoryError(err.response?.data?.message || 'Completed pickup logs could not load.'); }
+    finally { setHistoryLoading(false); }
+  }, []);
 
   useEffect(() => { void reloadBatches(); }, [reloadBatches]);
   useEffect(() => {
@@ -307,6 +316,7 @@ export default function MerchantDashboard({ session, onBrowse, onNotice, onSessi
   }, [reloadQueue]);
   useEffect(() => { void reloadImpact(); }, [reloadImpact]);
   useEffect(() => { if (dashboardTab === 'reviews') void reloadReviews(); }, [dashboardTab, reloadReviews]);
+  useEffect(() => { if (dashboardTab === 'history') void reloadHandoffHistory(); }, [dashboardTab, reloadHandoffHistory]);
   useEffect(() => {
     const timer = window.setInterval(() => setNow(Date.now()), 1000);
     return () => window.clearInterval(timer);
@@ -353,6 +363,14 @@ export default function MerchantDashboard({ session, onBrowse, onNotice, onSessi
     }
   }
 
+  function exportHandoffHistory() {
+    const columns = ['Buyer Name', 'Pickup Code', 'Item', 'Quantity', 'Amount Collected', 'Verified At'];
+    const escape = value => { const safe = String(value ?? '').replace(/^[\s]*([=+@-])/, "'$1"); return `"${safe.replace(/"/g, '""')}"`; };
+    const rows = [columns, ...handoffHistory.map(row => [row.buyerName, row.qrToken, row.itemName, row.quantity, row.isDonationOnly || Number(row.totalPrice) === 0 ? 'Free NGO' : Number(row.totalPrice || 0).toFixed(2), new Date(row.completedAt).toLocaleString()])];
+    const blob = new Blob([rows.map(row => row.map(escape).join(',')).join('\r\n')], { type: 'text/csv;charset=utf-8' });
+    const url = URL.createObjectURL(blob); const link = document.createElement('a'); link.href = url; link.download = 'salbarkain-completed-handoffs.csv'; link.click(); URL.revokeObjectURL(url);
+  }
+
   return <main className="dashboard-shell merchant-dashboard">
     <header className="dashboard-heading merchant-heading">
       <div className="merchant-heading-identity"><div className="merchant-heading-logo">{safeImageUrl(logoPreview || profile?.storefrontPhotoUrl) ? <><img src={safeImageUrl(logoPreview || profile.storefrontPhotoUrl)} alt={profile?.organizationName || profile?.storeName || session.storeName || 'Store'} onError={event => { event.currentTarget.hidden = true; event.currentTarget.nextElementSibling.hidden = false; }} /><span className="storefront-icon-fallback" hidden><StorefrontIcon /></span></> : <span className="storefront-icon-fallback"><StorefrontIcon /></span>}</div><div><p className="eyebrow">Merchant operations</p><h1>{profile?.storeName || session.storeName || 'Your store'}</h1><p>Today’s rescue activity, pickup counter, and surplus inventory.</p></div></div>
@@ -362,13 +380,14 @@ export default function MerchantDashboard({ session, onBrowse, onNotice, onSessi
     <div className="merchant-dashboard-tabs" role="tablist" aria-label="Merchant workspace sections">
       <button type="button" role="tab" aria-selected={dashboardTab === 'operations'} className={dashboardTab === 'operations' ? 'active' : ''} onClick={() => setDashboardTab('operations')}>Operations</button>
       <button type="button" role="tab" aria-selected={dashboardTab === 'reviews'} className={dashboardTab === 'reviews' ? 'active' : ''} onClick={() => setDashboardTab('reviews')}>Customer reviews</button>
+      <button type="button" role="tab" aria-selected={dashboardTab === 'history'} className={dashboardTab === 'history' ? 'active' : ''} onClick={() => setDashboardTab('history')}>Completed handoff logs</button>
       <button type="button" role="tab" aria-selected={dashboardTab === 'profile'} className={dashboardTab === 'profile' ? 'active' : ''} onClick={() => setDashboardTab('profile')}>Store profile</button>
     </div>
 
     {dashboardTab === 'profile' ? <>
       {profileError && <div className="alert-banner" role="alert">{profileError} <button type="button" className="text-button" onClick={() => api.get('/merchants/profile').then(({ data }) => { setProfile(data?.data?.profile || null); setProfileError(''); }).catch(err => setProfileError(err.response?.data?.message || 'Store profile could not load.'))}>Try again</button></div>}
       <StoreProfilePanel profile={profile} onSaved={setProfile} onSessionUpdate={onSessionUpdate} completedRescues={completedRescues} onLogoPreviewChange={setLogoPreview} />
-    </> : dashboardTab === 'reviews' ? <section className="panel merchant-customer-reviews" aria-labelledby="merchant-reviews-title">
+    </> : dashboardTab === 'history' ? <section className="panel" aria-labelledby="merchant-handoff-history-title"><div className="merchant-queue-heading"><div><p className="eyebrow">Counter audit trail</p><h2 id="merchant-handoff-history-title">Completed handoff logs</h2><p className="panel-subtitle">A permanent record of pickups verified by your store.</p></div><div className="flex gap-2"><button type="button" className="secondary-button compact" onClick={() => void reloadHandoffHistory()}>Refresh</button><button type="button" className="primary-button compact" disabled={!handoffHistory.length} onClick={exportHandoffHistory}>Export CSV</button></div></div>{historyLoading ? <p className="panel-subtitle">Loading completed pickups…</p> : historyError ? <div className="merchant-inline-error" role="alert">{historyError}</div> : handoffHistory.length ? <div className="admin-table-wrap"><table className="admin-impact-table"><thead><tr><th>Buyer</th><th>Pickup code</th><th>Item &amp; quantity</th><th>Amount collected</th><th>Verified date &amp; time</th></tr></thead><tbody>{handoffHistory.map(row => <tr key={row.id}><td>{row.buyerName}</td><td><code>{row.qrToken}</code></td><td>{row.itemName} · {row.quantity}</td><td>{row.isDonationOnly ? 'Free NGO' : formatMoney(row.totalPrice)}</td><td>{new Date(row.completedAt).toLocaleString('en-PH')}</td></tr>)}</tbody></table></div> : <div className="merchant-queue-empty"><strong>No completed pickups yet</strong><span>Verified handoffs will be recorded here.</span></div>}</section> : dashboardTab === 'reviews' ? <section className="panel merchant-customer-reviews" aria-labelledby="merchant-reviews-title">
       <div className="merchant-queue-heading"><div><p className="eyebrow">Verified pickups only</p><h2 id="merchant-reviews-title">Customer reviews</h2><p className="panel-subtitle">Feedback from buyers whose pickup was confirmed at your counter.</p></div><button type="button" className="secondary-button compact" onClick={() => void reloadReviews()}>Refresh</button></div>
       <div className="merchant-reviews-summary"><strong>★ {reviewsData.averageRating.toFixed(1)}</strong><span>average from {reviewsData.totalReviews} {reviewsData.totalReviews === 1 ? 'review' : 'reviews'}</span></div>
       {reviewsLoading ? <p className="panel-subtitle">Loading customer feedback…</p> : reviewsError ? <div className="merchant-inline-error" role="alert">{reviewsError}<button className="text-button" onClick={() => void reloadReviews()}>Try again</button></div> : reviewsData.reviews.length === 0 ? <div className="merchant-queue-empty"><strong>No reviews yet</strong><span>After a verified pickup, buyers can rate their food and counter experience.</span></div> : <div className="merchant-review-list">{reviewsData.reviews.map(review => <article className="merchant-review-card" key={review.id}><div className="merchant-review-topline"><strong>{review.buyerFirstName}</strong><span className="merchant-review-stars" aria-label={`${review.rating} out of 5 stars`}>{'★'.repeat(review.rating)}{'☆'.repeat(5 - review.rating)}</span></div><div className="merchant-review-meta">{review.itemName} · {new Date(review.reviewedAt).toLocaleDateString('en-PH', { year: 'numeric', month: 'short', day: 'numeric' })}</div><p className="merchant-review-comment">{review.reviewComment || 'Rating submitted without a written comment.'}</p></article>)}</div>}
@@ -387,15 +406,15 @@ export default function MerchantDashboard({ session, onBrowse, onNotice, onSessi
     <section className="merchant-operations-hub" aria-labelledby="merchant-operations-title">
       <div className="merchant-section-heading"><div><p className="eyebrow">At the counter</p><h2 id="merchant-operations-title">Live pickup queue &amp; QR verification</h2></div><span className="merchant-queue-count">{queue.length} waiting</span></div>
       <div className="merchant-operations-grid">
-        <MerchantScanner onNotice={onNotice} onCompleted={() => Promise.all([reloadQueue(), reloadImpact(), reloadBatches()])} />
+        <MerchantScanner onNotice={onNotice} onCompleted={() => Promise.all([reloadQueue(), reloadImpact(), reloadBatches(), reloadHandoffHistory()])} />
         <section className="panel merchant-queue-panel" aria-label="Incoming buyer reservations">
           <div className="merchant-queue-heading"><div><h3>Incoming reservations</h3><p className="panel-subtitle">Confirm pickup after payment at the counter.</p></div><button type="button" className="secondary-button compact" onClick={() => void reloadQueue()}>Refresh</button></div>
           {queueLoading ? <div className="merchant-queue-skeleton" aria-label="Loading reservations"><i /><i /><i /></div> : queueError ? <div className="merchant-inline-error" role="alert">{queueError}<button type="button" className="text-button" onClick={() => void reloadQueue()}>Try again</button></div> : queue.length === 0 ? <div className="merchant-queue-empty"><strong>No buyers waiting</strong><span>New pickup passes will appear here automatically.</span></div> : <div className="merchant-queue-list">{queue.map(claim => {
             const urgent = new Date(claim.pickupDeadline).getTime() - now <= 10 * 60 * 1000;
             return <article className="merchant-reservation" key={claim.id}>
               <div className="merchant-reservation-main"><strong>{claim.buyerName}</strong><span>{claim.itemName} · {claim.qty} {claim.qty === 1 ? 'portion' : 'portions'}</span></div>
-              <div className="merchant-reservation-meta"><span className={`merchant-countdown ${urgent ? 'urgent' : ''}`}>{countdown(claim.pickupDeadline, now)}</span><strong>{formatMoney(claim.totalToCollect)}</strong><small>Cash / GCash at counter</small></div>
-              <button type="button" className="primary-button compact merchant-handoff" disabled={busyClaim === claim.qrToken} onClick={() => void confirmHandoff(claim.qrToken)}>{busyClaim === claim.qrToken ? 'Confirming…' : 'Confirm handoff'}</button>
+              <div className="merchant-reservation-meta"><span className={`merchant-countdown ${urgent ? 'urgent' : ''}`}>{countdown(claim.pickupDeadline, now)}</span><strong>{claim.isFreeNgo ? 'Free NGO' : formatMoney(claim.totalToCollect)}</strong><small>{claim.isFreeNgo ? 'Donation pickup' : 'Cash / GCash at counter'}</small></div>
+              <span className="merchant-awaiting-scan" role="status">Awaiting QR scan</span>
             </article>;
           })}</div>}
         </section>

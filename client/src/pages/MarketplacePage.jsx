@@ -5,7 +5,8 @@ import BatchCard from '../components/BatchCard.jsx';
 import ReportModal from '../components/ReportModal.jsx';
 import IloiloPartnerPanel from '../components/IloiloPartnerPanel.jsx';
 import { BatchSkeletons } from '../components/LoadingSkeletons.jsx';
-import { getDeviceToken } from '../utils/identity.js';
+import { getDeviceToken, getGuestProfile } from '../utils/identity.js';
+import { getEffectiveUnitPrice, isFlashDropActive } from '../utils/pricing.js';
 
 const FILTERS = ['All', 'Under ₱30', 'Surprise Magic Bayong', 'Last-Hour Flash Drop', 'Free for NGOs'];
 function matchesMunicipality(value = '', selected = 'All Iloilo') {
@@ -19,8 +20,13 @@ function matchesMunicipality(value = '', selected = 'All Iloilo') {
 function distanceKmFromGeoJson(fromCoords, location) {
   const toCoords = location?.coordinates;
   if (!Array.isArray(fromCoords) || fromCoords.length !== 2 || !Array.isArray(toCoords) || toCoords.length !== 2) return null;
-  const [fromLng, fromLat] = fromCoords.map(Number);
-  const [toLng, toLat] = toCoords.map(Number);
+  const normalize = (pair) => {
+    const [first, second] = pair.map(Number);
+    if (![first, second].every(Number.isFinite)) return null;
+    return Math.abs(first) <= 90 && Math.abs(second) > 90 ? [second, first] : [first, second];
+  };
+  const [fromLng, fromLat] = normalize(fromCoords) || [];
+  const [toLng, toLat] = normalize(toCoords) || [];
   if (![fromLng, fromLat, toLng, toLat].every(Number.isFinite)) return null;
   const radians = degrees => degrees * (Math.PI / 180);
   const latitudeDelta = radians(toLat - fromLat);
@@ -37,7 +43,7 @@ function formatDistance(km) {
   return `${km.toFixed(1)} km away`;
 }
 
-export default function MarketplacePage({ session, onClaim, onPartnerSignIn, onNotice, refreshTrigger = 0 }) {
+export default function MarketplacePage({ session, activeClaim = null, onShowPickupPass, onClaim, onPartnerSignIn, onNotice, refreshTrigger = 0 }) {
   const navigate = useNavigate();
   const [batches, setBatches] = useState([]); const [partners, setPartners] = useState([]); const [partnerError, setPartnerError] = useState(''); const [filter, setFilter] = useState('All'); const [municipality, setMunicipality] = useState('All Iloilo'); const [loading, setLoading] = useState(true); const [partnersLoading, setPartnersLoading] = useState(true); const [error, setError] = useState(''); const [isRefreshing, setIsRefreshing] = useState(false); const [pullState, setPullState] = useState('idle'); const [selected, setSelected] = useState(null);
   const touchStartY = useRef(null);
@@ -167,13 +173,18 @@ export default function MarketplacePage({ session, onClaim, onPartnerSignIn, onN
     return matching.map(batch => ({ ...batch, distanceKm: distanceKmFromGeoJson(userCoords, batch.merchantId?.location) }))
       .sort((a, b) => (a.distanceKm ?? Infinity) - (b.distanceKm ?? Infinity));
   }, [townBatches, filter, now, userCoords]);
-  function claim(batch) { const isVerifiedNgo = session?.role === 'ngo' && (session?.verificationStatus === 'verified' || session?.verified === true); const flashActive = batch.isFlashDropEnabled && new Date(batch.expiresAt).getTime() - Date.now() <= 30 * 60 * 1000; const priorityActive = batch.ngoPriorityUntil && new Date(batch.ngoPriorityUntil).getTime() > Date.now(); if ((batch.isDonationOnly || priorityActive) && !isVerifiedNgo) { onNotice(batch.isDonationOnly ? 'NGO Donation Only. This batch is reserved for verified NGO and shelter accounts.' : `Reserved for Verified NGOs until ${new Date(batch.ngoPriorityUntil).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' })}.`); if (batch.isDonationOnly && !session) onPartnerSignIn(); return; } onClaim({ ...batch, verifiedNgo: isVerifiedNgo, flashActive, quotePrice: flashActive && isVerifiedNgo ? 0 : flashActive ? Number((Number(batch.price || 0) * 0.5).toFixed(2)) : Number(batch.price || 0) }); }
-  async function submitReport({ type, note }) {
+  function claim(batch) { const isVerifiedNgo = session?.role === 'ngo' && (session?.verificationStatus === 'verified' || session?.verified === true); const flashActive = isFlashDropActive(batch); const priorityActive = batch.ngoPriorityUntil && new Date(batch.ngoPriorityUntil).getTime() > Date.now(); if ((batch.isDonationOnly || priorityActive) && !isVerifiedNgo) { onNotice(batch.isDonationOnly ? 'NGO Donation Only. This batch is reserved for verified NGO and shelter accounts.' : `Reserved for Verified NGOs until ${new Date(batch.ngoPriorityUntil).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' })}.`); if (batch.isDonationOnly && !session) onPartnerSignIn(); return; } onClaim({ ...batch, verifiedNgo: isVerifiedNgo, flashActive, quotePrice: getEffectiveUnitPrice(batch, Date.now(), { verifiedNgo: isVerifiedNgo }) }); }
+  async function submitReport({ type, note, photoProof }) {
     if (!reportBatch || reportBusy) return;
     setReportBusy(true);
     try {
       const batch = reportBatch;
-      const { data } = await api.patch(`/batches/${batch._id}/report`, { deviceToken: getDeviceToken(), reason: type, note });
+      const guest = getGuestProfile();
+      const body = new FormData();
+      body.append('deviceToken', getDeviceToken()); body.append('phone', guest.phone || '');
+      body.append('reason', type); body.append('note', note || '');
+      if (photoProof) body.append('photoProof', photoProof, photoProof.name || 'report-proof.jpg');
+      const { data } = await api.patch(`/batches/${batch._id}/report`, body, { headers: { 'Content-Type': 'multipart/form-data' } });
       onNotice(data.data.hidden ? 'This listing has been hidden and sent for review.' : type === 'spoilage' ? 'Food safety report recorded.' : 'Thanks. Your report was recorded.');
       if (data.data.hidden) setBatches(current => current.filter(item => item._id !== batch._id));
       setReportBatch(null);
@@ -185,6 +196,7 @@ export default function MarketplacePage({ session, onClaim, onPartnerSignIn, onN
   function resetFilters() { setFilter('All'); setMunicipality('All Iloilo'); }
   function postSurplus() { if (session?.role === 'merchant') navigate('/workspace'); else onPartnerSignIn(); }
   return <main className="market-shell" onTouchStart={onTouchStart} onTouchMove={onTouchMove} onTouchEnd={onTouchEnd} onTouchCancel={onTouchCancel}>
+    {activeClaim && <div className="active-pickup-reminder" role="status"><p><strong>Active Pickup Pass ({activeClaim.qrToken})</strong><span> — {Number(activeClaim.quantity || activeClaim.qty || 1)}x {activeClaim.itemName || 'surplus batch'} at {activeClaim.storeName || 'food partner'}</span></p><button type="button" onClick={onShowPickupPass}>Show QR Code</button></div>}
     {pullState !== 'idle' && <div className="pull-refresh-indicator" role="status" aria-live="polite">{isRefreshing && <span className="market-refresh-icon animate-spin" aria-hidden="true">↻</span>}{isRefreshing ? 'Updating Iloilo listings...' : pullState === 'ready' ? 'Release to refresh live surplus...' : 'Pull down to refresh live surplus...'}</div>}
     {offline && <div className="alert-banner mb-4" role="alert">You’re offline. Reconnect to refresh batches and make a pickup reservation.</div>}
     <div className="market-heading">

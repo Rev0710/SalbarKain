@@ -32,6 +32,7 @@ const userSchema = new Schema({
   zeroWasteCertified: { type: Boolean, default: false, index: true },
   averageRating: { type: Number, min: 0, max: 5, default: 0 },
   totalReviews: { type: Number, min: 0, default: 0 },
+  activeNgoClaimCount: { type: Number, min: 0, default: 0 },
   assignedMunicipality: { type: String, trim: true, maxlength: 100, default() { return this.role === 'admin' ? 'ALL' : undefined; }, index: true },
   verifiedBy: { type: Schema.Types.ObjectId, ref: 'User', default: null },
   verifiedAt: { type: Date, default: null },

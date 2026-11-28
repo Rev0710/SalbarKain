@@ -8,6 +8,7 @@ const httpError = require('../utils/httpError');
 const normalizePhone = require('../utils/phone');
 const { batchCache, invalidateBatchCache } = require('../utils/cache');
 const { expireClaimAndRestore } = require('../utils/claimExpiry');
+const { getEffectiveUnitPrice, isFlashDropActive } = require('../utils/pricing');
 
 function validateClaimBody(body, requestedQty) {
   if (!body || typeof body !== 'object' || Array.isArray(body)) {
@@ -70,20 +71,34 @@ async function createClaim(req, res) {
   let createdClaim;
 
   try {
+    if (verifiedNgoBuyer) {
+      const overdueClaims = await Claim.find({ claimantUserId: req.user.id, status: 'pending', pickupDeadline: { $lte: now } }).select('_id').lean();
+      for (const overdue of overdueClaims) await expireClaimAndRestore(overdue._id, now);
+    }
     await session.withTransaction(async () => {
       const existing = await Claim.findOne({
         status: 'pending',
+        isNgoClaim: false,
         $or: [{ deviceToken: input.deviceToken }, { phone: input.phone }],
       }).session(session).select('_id').lean();
       if (existing) {
         throw httpError(409, 'ACTIVE_CLAIM_EXISTS', 'You already have a pending pickup. Complete or wait for it to expire before claiming another batch.');
       }
 
-      const candidateBatch = await Batch.findById(input.batchId).session(session).select('merchantId isDonationOnly ngoPriorityUntil expiresAt safeUntil price originalPrice retailValue isFlashDropEnabled').lean();
+      const candidateBatch = await Batch.findById(input.batchId).session(session).select('merchantId isDonationOnly ngoPriorityUntil expiresAt safeUntil price originalPrice retailValue isFlashDropEnabled status').lean();
+      if (candidateBatch?.status === 'flagged') throw httpError(410, 'BATCH_RECALLED', 'This listing is under an LGU safety review and cannot be claimed.');
       const merchant = candidateBatch && await User.findOne({ _id: candidateBatch.merchantId, role: 'merchant', $or: [{ verificationStatus: 'verified' }, { verified: true }] }).session(session).select('_id municipality barangay').lean();
       if (!merchant) throw httpError(404, 'BATCH_UNAVAILABLE', 'This batch is not currently available.');
       if (new Date(candidateBatch.expiresAt) <= now || new Date(candidateBatch.safeUntil || candidateBatch.expiresAt) <= now) throw httpError(410, 'BATCH_EXPIRED', 'This food batch is past its safe pickup window.');
       const verifiedNgo = req.user?.role === 'ngo' && (req.user.verificationStatus === 'verified' || req.user.verified);
+      if (verifiedNgo) {
+        const reservedNgoSlot = await User.findOneAndUpdate(
+          { _id: req.user.id, role: 'ngo', $or: [{ verificationStatus: 'verified' }, { verified: true }], activeNgoClaimCount: { $lt: 3 } },
+          { $inc: { activeNgoClaimCount: 1 } },
+          { session, returnDocument: 'after' },
+        ).select('_id');
+        if (!reservedNgoSlot) throw httpError(409, 'NGO_ACTIVE_PASS_LIMIT', 'Verified NGOs can keep up to three active pickup passes at a time.');
+      }
       if (candidateBatch.isDonationOnly && !verifiedNgo) throw httpError(403, 'NGO_VERIFICATION_REQUIRED', 'Only a verified NGO or shelter can claim a donation-only batch.');
       if (candidateBatch.ngoPriorityUntil && candidateBatch.ngoPriorityUntil > now && !verifiedNgo) {
         throw httpError(403, 'NGO_PRIORITY_ACTIVE', 'This batch is in its 15-minute NGO priority window. Verified NGOs can claim it first.');
@@ -107,8 +122,8 @@ async function createClaim(req, res) {
       if (batch.remainingQty === 0) {
         await Batch.updateOne({ _id: batch._id, status: 'active', remainingQty: 0 }, { $set: { status: 'sold_out' } }, { session });
       }
-      const flashActive = candidateBatch.isFlashDropEnabled && candidateBatch.expiresAt.getTime() - now.getTime() <= 30 * 60 * 1000;
-      const priceAtClaim = verifiedNgo && flashActive ? 0 : flashActive ? Number((Number(candidateBatch.price || 0) * 0.5).toFixed(2)) : Number(candidateBatch.price || 0);
+      const flashActive = isFlashDropActive(candidateBatch, now);
+      const priceAtClaim = getEffectiveUnitPrice(candidateBatch, now, { verifiedNgo });
       const unitSavings = candidateBatch.retailValue != null ? Math.max(0, Number(candidateBatch.retailValue) - priceAtClaim) : candidateBatch.originalPrice != null ? Math.max(0, Number(candidateBatch.originalPrice) - priceAtClaim) : 0;
       const totalPrice = Number((priceAtClaim * requestedQty).toFixed(2));
       const claim = new Claim({
@@ -122,6 +137,7 @@ async function createClaim(req, res) {
         buyerName: input.buyerName,
         deviceToken: input.deviceToken,
         phone: input.phone,
+        ...(verifiedNgo ? { claimantUserId: req.user.id, isNgoClaim: true } : {}),
         safetyAcknowledged: true,
         priceAtClaim,
         totalPrice,
@@ -202,6 +218,7 @@ async function cancelClaim(req, res) {
         ],
         { session },
       );
+      if (claim.claimantUserId) await User.updateOne({ _id: claim.claimantUserId, activeNgoClaimCount: { $gt: 0 } }, { $inc: { activeNgoClaimCount: -1 } }, { session });
       result = { status: 'cancelled', alreadyCancelled: false };
     });
   } finally {
@@ -241,10 +258,11 @@ async function verifyClaim(req, res) {
       if (!validBatch) throw httpError(410, 'PICKUP_PASS_EXPIRED', 'This food batch is past its safe pickup window.');
       completed = await Claim.findOneAndUpdate(
         { _id: claim._id, merchantId: req.user.id, status: 'pending', pickupDeadline: { $gt: now } },
-        { $set: { status: 'completed' } },
+        { $set: { status: 'completed', completedAt: now } },
         { session, returnDocument: 'after' },
       );
       if (!completed) throw httpError(409, 'CLAIM_NOT_PENDING', 'This pickup pass is no longer pending.');
+      if (completed.claimantUserId) await User.updateOne({ _id: completed.claimantUserId, activeNgoClaimCount: { $gt: 0 } }, { $inc: { activeNgoClaimCount: -1 } }, { session });
       const batch = validBatch;
       const merchant = await User.findById(completed.merchantId).session(session).select('storeName barangay municipality').lean();
       if (!batch || !merchant) throw httpError(409, 'IMPACT_RECORD_FAILED', 'Pickup impact could not be recorded. Try scanning the pass again.');
@@ -278,7 +296,7 @@ async function verifyClaim(req, res) {
         qty: completed.qty,
         buyerName: completed.buyerName,
         status: completed.status,
-        completedAt: completed.updatedAt,
+        completedAt: completed.completedAt || completed.updatedAt,
       },
     },
   });
@@ -332,7 +350,7 @@ async function listMerchantActiveClaims(req, res) {
     pickupDeadline: { $gt: now },
   })
     .select('+qrToken buyerName qty priceAtClaim pickupDeadline batchId')
-    .populate({ path: 'batchId', select: 'itemName photoUrl' })
+    .populate({ path: 'batchId', select: 'itemName photoUrl isDonationOnly' })
     .sort({ pickupDeadline: 1 })
     .lean();
 
@@ -346,12 +364,41 @@ async function listMerchantActiveClaims(req, res) {
         qty: claim.qty,
         priceAtClaim: claim.priceAtClaim,
         totalToCollect: Number((Number(claim.priceAtClaim || 0) * claim.qty).toFixed(2)),
+        isFreeNgo: Boolean(claim.batchId?.isDonationOnly || Number(claim.priceAtClaim || 0) === 0),
         pickupDeadline: claim.pickupDeadline,
         itemName: claim.batchId?.itemName || 'Surplus batch',
         photoUrl: claim.batchId?.photoUrl || '',
       })),
     },
   });
+}
+
+async function listMerchantHistory(req, res) {
+  const claims = await Claim.find({ merchantId: req.user.id, status: 'completed' })
+    .select('+qrToken buyerName qty quantity priceAtClaim totalPrice completedAt updatedAt batchId')
+    .populate({ path: 'batchId', select: 'itemName isDonationOnly' })
+    .sort({ completedAt: -1, updatedAt: -1 }).lean();
+  res.set('Cache-Control', 'no-store').json({ success: true, data: { claims: claims.map((claim) => ({
+    id: String(claim._id), buyerName: claim.buyerName, qrToken: claim.qrToken,
+    quantity: Number(claim.quantity || claim.qty || 1), itemName: claim.batchId?.itemName || 'Surplus batch',
+    totalPrice: Number(claim.totalPrice ?? (Number(claim.priceAtClaim || 0) * Number(claim.qty || 1))),
+    isDonationOnly: Boolean(claim.batchId?.isDonationOnly || Number(claim.totalPrice || 0) === 0),
+    completedAt: claim.completedAt || claim.updatedAt,
+  })) } });
+}
+
+async function ngoImpact(req, res) {
+  const ngo = await User.findById(req.user.id).select('activeNgoClaimCount').lean();
+  const [totals] = await Claim.aggregate([
+    { $match: { claimantUserId: new mongoose.Types.ObjectId(req.user.id), status: 'completed' } },
+    { $group: { _id: null, completedPickups: { $sum: 1 }, rescuedPacks: { $sum: { $ifNull: ['$quantity', '$qty'] } } } },
+  ]);
+  const packs = Number(totals?.rescuedPacks || 0);
+  res.set('Cache-Control', 'no-store').json({ success: true, data: {
+    activePasses: Number(ngo?.activeNgoClaimCount) || 0, completedPickups: Number(totals?.completedPickups || 0),
+    rescuedPacks: packs, mealsDistributed: packs, foodDivertedKg: Number((packs * 0.5).toFixed(1)),
+    co2PreventedKg: Number((packs * 1.25).toFixed(1)), communityHungerHeroProgress: Math.min(packs, 100), target: 100,
+  } });
 }
 
 async function merchantImpact(req, res) {
@@ -456,4 +503,4 @@ async function listRecentRescues(_req, res) {
   res.set('Cache-Control', 'no-store').json({ success: true, data: { rescues } });
 }
 
-module.exports = { createClaim, cancelClaim, verifyClaim, reviewClaim, listMerchantActiveClaims, merchantImpact, getClaimStatus, listRecentRescues, previewClaim };
+module.exports = { createClaim, cancelClaim, verifyClaim, reviewClaim, listMerchantActiveClaims, listMerchantHistory, ngoImpact, merchantImpact, getClaimStatus, listRecentRescues, previewClaim };

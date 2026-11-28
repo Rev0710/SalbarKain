@@ -1,16 +1,17 @@
 import { useEffect, useState } from 'react';
 import { formatTimeLeft } from '../utils/time.js';
 import { safeImageUrl } from '../utils/safeImageUrl.js';
+import { getEffectiveUnitPrice, isFlashDropActive } from '../utils/pricing.js';
 
 export default function BatchCard({ batch, isNgo, distanceLabel = '', onClaim, onSignIn, onReport }) {
   const [now, setNow] = useState(Date.now());
   const [time, setTime] = useState(() => formatTimeLeft(batch.expiresAt));
   useEffect(() => { const timer = setInterval(() => { setNow(Date.now()); setTime(formatTimeLeft(batch.expiresAt)); }, 1000); return () => clearInterval(timer); }, [batch.expiresAt]);
   const free = Boolean(batch.isDonationOnly);
-  const flashActive = batch.isFlashDropEnabled && new Date(batch.expiresAt).getTime() - now <= 30 * 60 * 1000;
+  const flashActive = isFlashDropActive(batch, now);
   const priorityActive = Boolean(batch.ngoPriorityUntil && new Date(batch.ngoPriorityUntil).getTime() > now);
   const ngoPriorityLocked = Boolean(priorityActive && !isNgo);
-  const shownPrice = flashActive ? Number((Number(batch.price || 0) * 0.5).toFixed(2)) : Number(batch.price);
+  const shownPrice = getEffectiveUnitPrice(batch, now, { verifiedNgo: isNgo });
   const remaining = Math.max(0, Number(batch.remainingQty) || 0);
   const total = Math.max(remaining, Number(batch.quantity) || remaining);
   const disabled = time === '00:00';
@@ -31,6 +32,7 @@ export default function BatchCard({ batch, isNgo, distanceLabel = '', onClaim, o
         <span>· {merchantLocation}</span>
         {distanceLabel && <span className="batch-distance">· {distanceLabel}</span>}
       </p></div>
+      {Number(batch.verifiedSpoilageFlags) === 1 && <p className="verified-spoilage-warning" role="status">⚠ 1 Verified Spoilage Report · LGU Reviewing</p>}
       <div className="batch-bottom"><div className="batch-price">{free || (flashActive && isNgo) ? <span className="free-badge">Free for NGOs</span> : <>{flashActive && <span className="flash-badge">Flash Drop · 50% off</span>}{batch.originalPrice != null && <del className="text-muted mr-1">₱{Number(batch.originalPrice).toFixed(2)}</del>}₱{shownPrice.toFixed(2)}</>}{ngoPriorityLocked && <span className="ngo-priority-badge">NGO priority until {new Date(batch.ngoPriorityUntil).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' })}</span>}<span className={`batch-stock ${remaining <= 2 ? 'low-stock' : ''}`}>{remaining} of {total} remaining</span></div><div className="urgency-action"><span className="countdown" aria-label={`${time} until pickup cutoff`}>{time}</span><button className="claim-button" disabled={disabled || remaining === 0 || ngoPriorityLocked} onClick={() => onClaim(batch)}>{disabled || remaining === 0 ? 'Closed' : ngoPriorityLocked ? 'Reserved for NGOs' : free && !isNgo ? 'NGO sign-in' : 'View & Claim'}</button></div></div>
       <button className="report-link" onClick={() => onReport(batch)} aria-label={`Report ${batch.itemName}`} title="Report this listing">⚑</button>
     </div>

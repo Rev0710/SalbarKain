@@ -1,6 +1,7 @@
 const mongoose = require('mongoose');
 const Batch = require('../models/Batch');
 const Claim = require('../models/Claim');
+const User = require('../models/User');
 const { invalidateBatchCache } = require('./cache');
 
 async function expireClaimAndRestore(claimId, now = new Date(), { force = false } = {}) {
@@ -29,7 +30,7 @@ async function expireClaimAndRestore(claimId, now = new Date(), { force = false 
                 $cond: [
                   { $or: [{ $lte: ['$expiresAt', now] }, { $lte: [{ $ifNull: ['$safeUntil', '$expiresAt'] }, now] }] },
                   'expired',
-                  { $cond: [{ $eq: ['$status', 'withdrawn'] }, 'withdrawn', 'active'] },
+                  { $cond: [{ $in: ['$status', ['withdrawn', 'flagged']] }, '$status', 'active'] },
                 ],
               },
             },
@@ -37,6 +38,7 @@ async function expireClaimAndRestore(claimId, now = new Date(), { force = false 
         ],
         { session },
       );
+      if (claim.claimantUserId) await User.updateOne({ _id: claim.claimantUserId, activeNgoClaimCount: { $gt: 0 } }, { $inc: { activeNgoClaimCount: -1 } }, { session });
       expired = true;
     });
   } finally {

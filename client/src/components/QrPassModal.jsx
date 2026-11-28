@@ -72,9 +72,14 @@ export default function QrPassModal({ pass, onClose, onStatusChange }) {
   useEffect(() => {
     if (!terminal || handledTerminal.current) return;
     handledTerminal.current = true;
-    localStorage.removeItem(ACTIVE_PASS_KEY);
-    localStorage.removeItem(LEGACY_PASS_KEY);
-    onStatusChangeRef.current?.({ status: claimStatus });
+    try {
+      const storedPass = JSON.parse(localStorage.getItem(ACTIVE_PASS_KEY) || 'null');
+      if (!storedPass?.qrToken || storedPass.qrToken === pass.qrToken) {
+        localStorage.removeItem(ACTIVE_PASS_KEY);
+        localStorage.removeItem(LEGACY_PASS_KEY);
+      }
+    } catch { /* Preserve a newer pass if local storage has an invalid value. */ }
+    onStatusChangeRef.current?.({ status: claimStatus, qrToken: pass.qrToken });
     if (claimStatus === 'completed') {
       window.dispatchEvent(new Event('salbarkain:rescue-completed'));
       let previousRescues = Number(impact?.rescues) || 0;

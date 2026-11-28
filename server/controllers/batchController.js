@@ -1,10 +1,14 @@
 const { uploadImageBuffer } = require('../utils/uploadImage');
+const { isFlashDropActive } = require('../utils/pricing');
 const Batch = require('../models/Batch');
 const { STORAGE_TYPES, CONSUME_WITHIN, ALLERGENS } = require('../models/Batch');
 const User = require('../models/User');
 const httpError = require('../utils/httpError');
 const { batchCache, BATCH_CACHE_PREFIX, invalidateBatchCache } = require('../utils/cache');
 const { hashIdentifier } = require('../utils/authAudit');
+const ReportReporter = require('../models/ReportReporter');
+const Claim = require('../models/Claim');
+const normalizePhone = require('../utils/phone');
 
 function normalizeDemoPhotoUrl(photoUrl) {
   if (typeof photoUrl !== 'string') return photoUrl;
@@ -235,7 +239,7 @@ async function listBatches(req, res) {
     && batch.remainingQty > 0
     && new Date(batch.expiresAt).getTime() > currentTime
     && new Date(batch.safeUntil || batch.expiresAt).getTime() > currentTime).map((batch) => {
-      const flashActive = batch.isFlashDropEnabled && new Date(batch.expiresAt).getTime() - currentTime <= 30 * 60 * 1000;
+      const flashActive = isFlashDropActive(batch, currentTime);
     return { ...batch, photoUrl: normalizeDemoPhotoUrl(batch.photoUrl), flashActive, flashPrice: flashActive ? Number((Number(batch.price || 0) * 0.5).toFixed(2)) : null, flashFreeForNgo: Boolean(flashActive && !batch.isDonationOnly) };
     });
   res.set('Cache-Control', 'no-store').status(200).json({ success: true, data: { batches: visible } });
@@ -320,29 +324,70 @@ async function reportBatch(req, res) {
   }
   const reporterHash = hashIdentifier(deviceToken);
   if (!reporterHash) throw httpError(503, 'REPORTING_NOT_CONFIGURED', 'Batch reporting is temporarily unavailable.');
-  const reason = req.body?.reason === 'spoilage' ? 'spoilage' : 'general';
+  if (!['spoilage', 'general'].includes(req.body?.reason)) throw httpError(400, 'INVALID_REPORT_REASON', 'Choose a valid report reason.');
+  const reason = req.body.reason;
   const note = typeof req.body?.note === 'string' ? req.body.note.trim().slice(0, 140) : '';
-  const spoilage = reason === 'spoilage';
-  const countField = spoilage ? 'spoilageReportCount' : 'reportCount';
-  const devicesField = spoilage ? 'spoilageReportedByDevices' : 'reportedByDevices';
-  const threshold = spoilage ? 2 : 3;
-  const batch = await Batch.findOneAndUpdate(
-    { _id: req.params.id, status: 'active', [devicesField]: { $ne: reporterHash }, $or: [{ [countField]: { $lt: threshold } }, { [countField]: { $exists: false } }] },
-    [{ $set: {
-      [devicesField]: { $concatArrays: [{ $ifNull: [`$${devicesField}`, []] }, [reporterHash]] },
-      [countField]: { $add: [{ $ifNull: [`$${countField}`, 0] }, 1] },
-      status: { $cond: [{ $gte: [{ $add: [{ $ifNull: [`$${countField}`, 0] }, 1] }, threshold] }, 'flagged', '$status'] },
-      foodSafetyFlagged: spoilage ? { $cond: [{ $gte: [{ $add: [{ $ifNull: ['$spoilageReportCount', 0] }, 1] }, threshold] }, true, '$foodSafetyFlagged'] } : '$foodSafetyFlagged',
-      reportNotes: { $concatArrays: [{ $ifNull: ['$reportNotes', []] }, [{ reason: { $literal: reason }, note: { $literal: note }, reportedAt: new Date() }]] },
-    } }], { new: true, updatePipeline: true },
+  const now = new Date();
+  const windowStart = new Date(now.getTime() - 24 * 60 * 60 * 1000);
+  let reporter = await ReportReporter.findOne({ deviceTokenHash: reporterHash }).lean();
+  if (reporter?.shadowMuted) throw httpError(429, 'REPORTER_MUTED', 'Reports from this device are temporarily unavailable.');
+  const recentReports = (reporter?.reportTimes || []).filter((time) => new Date(time) > windowStart);
+  if (recentReports.length >= 2) throw httpError(429, 'REPORT_LIMIT_REACHED', 'This device can submit up to two reports every 24 hours.');
+  if (await Batch.exists({ _id: req.params.id, 'reportLogs.deviceToken': reporterHash })) throw httpError(409, 'ALREADY_REPORTED', 'You already reported this listing.');
+  let photoUrl = '';
+  if (req.file) {
+    try { photoUrl = await uploadImageBuffer(req.file, { folder: 'salbarkain/report-proof' }); }
+    catch { throw httpError(503, 'REPORT_PHOTO_UPLOAD_FAILED', 'The attached photo could not be uploaded. Try again without the photo.'); }
+  }
+  let normalizedPhone = '';
+  if (typeof req.body?.phone === 'string' && req.body.phone.trim()) {
+    try { normalizedPhone = normalizePhone(req.body.phone); } catch { normalizedPhone = ''; }
+  }
+  const verifiedClaimer = await Claim.exists({
+    batchId: req.params.id,
+    $or: [{ deviceToken }, ...(normalizedPhone ? [{ phone: normalizedPhone }] : [])],
+  });
+  await ReportReporter.updateOne({ deviceTokenHash: reporterHash }, { $setOnInsert: { deviceTokenHash: reporterHash, reportTimes: [], falseFlags: 0, shadowMuted: false } }, { upsert: true });
+  const recentReportTimes = {
+    $filter: {
+      input: { $ifNull: ['$reportTimes', []] },
+      as: 'reportedAt',
+      cond: { $gt: ['$$reportedAt', windowStart] },
+    },
+  };
+  const reporterReservation = await ReportReporter.findOneAndUpdate(
+    {
+      deviceTokenHash: reporterHash,
+      shadowMuted: { $ne: true },
+      $expr: { $lt: [{ $size: recentReportTimes }, 2] },
+    },
+    [{ $set: { reportTimes: { $concatArrays: [recentReportTimes, [now]] } } }],
+    { new: true },
   );
+  if (!reporterReservation) throw httpError(429, 'REPORT_LIMIT_REACHED', 'This device can submit up to two reports every 24 hours.');
+  const verifiedTotalIncrement = verifiedClaimer ? 1 : 0;
+  const verifiedSpoilageIncrement = verifiedClaimer && reason === 'spoilage' ? 1 : 0;
+  const batch = await Batch.findOneAndUpdate(
+    { _id: req.params.id, status: { $nin: ['expired', 'withdrawn', 'sold_out'] }, 'reportLogs.deviceToken': { $ne: reporterHash } },
+    {
+      $push: { reportLogs: { deviceToken: reporterHash, reasonType: reason, note, photoUrl, isVerifiedClaimer: Boolean(verifiedClaimer), reportedAt: now }, reportNotes: { reason, note, reportedAt: now } },
+      $inc: { reportCount: 1, verifiedTotalFlags: verifiedTotalIncrement, spoilageReportCount: verifiedSpoilageIncrement, verifiedSpoilageFlags: verifiedSpoilageIncrement },
+    },
+    { new: true, runValidators: true },
+  ).select('+reportLogs');
   if (!batch) {
     const exists = await Batch.exists({ _id: req.params.id });
     if (!exists) throw httpError(404, 'BATCH_NOT_FOUND', 'Batch was not found.');
-    throw httpError(409, 'ALREADY_REPORTED_OR_HIDDEN', 'You have already reported this batch, or it has already been hidden for review.');
+    throw httpError(409, 'ALREADY_REPORTED_OR_HIDDEN', 'You already reported this listing, or it is no longer accepting reports.');
+  }
+  const shouldHide = batch.verifiedSpoilageFlags >= 2 || batch.verifiedTotalFlags >= 3;
+  if (shouldHide || verifiedSpoilageIncrement && batch.verifiedSpoilageFlags === 1) {
+    await Batch.updateOne({ _id: batch._id }, { $set: { ...(shouldHide ? { status: 'flagged' } : {}), foodSafetyFlagged: true } });
+    if (shouldHide) batch.status = 'flagged';
+    batch.foodSafetyFlagged = true;
   }
   invalidateBatchCache();
-  res.status(200).json({ success: true, data: { reportCount: batch.reportCount, spoilageReportCount: batch.spoilageReportCount, reason, hidden: batch.status === 'flagged' } });
+  res.status(200).json({ success: true, data: { reportCount: batch.reportCount, spoilageReportCount: batch.spoilageReportCount, verifiedSpoilageFlags: batch.verifiedSpoilageFlags, reason, verifiedClaimer: Boolean(verifiedClaimer), hidden: batch.status === 'flagged' } });
 }
 
 module.exports = { createBatch, listBatches, listVerifiedPartners, listMyBatches, listMyHistory, reportBatch };

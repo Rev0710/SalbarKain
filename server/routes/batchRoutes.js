@@ -11,6 +11,6 @@ router.get('/my-history', authenticate, authorizeRoles('merchant'), requireVerif
 router.get('/partners', asyncHandler(listVerifiedPartners));
 router.get('/', optionalAuth, asyncHandler(listBatches));
 router.post('/', authenticate, authorizeRoles('merchant'), requireVerified, imageUpload.single('photo'), asyncHandler(createBatch));
-router.patch('/:id/report', rateLimit({ windowMs: 15 * 60 * 1000, limit: 20, standardHeaders: 'draft-8', legacyHeaders: false }), asyncHandler(reportBatch));
+router.patch('/:id/report', rateLimit({ windowMs: 15 * 60 * 1000, limit: 20, standardHeaders: 'draft-8', legacyHeaders: false }), imageUpload.single('photoProof'), asyncHandler(reportBatch));
 
 module.exports = router;

@@ -1,10 +1,12 @@
 const bcrypt = require('bcryptjs');
 const crypto = require('crypto');
+const mongoose = require('mongoose');
 const nodemailer = require('nodemailer');
 const cloudinary = require('../config/cloudinary');
 const User = require('../models/User');
 const Batch = require('../models/Batch');
 const Claim = require('../models/Claim');
+const ReportReporter = require('../models/ReportReporter');
 const ImpactEntry = require('../models/ImpactEntry');
 const httpError = require('../utils/httpError');
 const { invalidateBatchCache } = require('../utils/cache');
@@ -221,34 +223,63 @@ async function reviewVerification(req, res) {
   if (decision === 'reject') update.$set.verificationNote = rejectionReason;
   const user = await User.findOneAndUpdate(filter, update, { new: true, runValidators: true }).select('+rejectionReason');
   if (!user) throw httpError(404, 'APPLICANT_NOT_FOUND', 'Partner application was not found in your jurisdiction.');
-  if (decision === 'suspend' && user.role === 'merchant') await Batch.updateMany({ merchantId: user._id, status: 'active' }, { $set: { status: 'withdrawn' } });
+  if (decision === 'suspend' && user.role === 'merchant') {
+    await Batch.updateMany({ merchantId: user._id, status: 'active' }, { $set: { status: 'withdrawn' } });
+    const pendingNgoClaims = await Claim.aggregate([{ $match: { merchantId: user._id, status: 'pending', isNgoClaim: true, claimantUserId: { $exists: true } } }, { $group: { _id: '$claimantUserId', count: { $sum: 1 } } }]);
+    await Claim.updateMany({ merchantId: user._id, status: 'pending' }, { $set: { status: 'recalled' } });
+    await Promise.all(pendingNgoClaims.map((row) => User.updateOne({ _id: row._id, role: 'ngo' }, { $inc: { activeNgoClaimCount: -row.count } })));
+  }
   invalidateBatchCache();
   res.json({ success: true, data: { applicant: adminSafeUser(user) } });
 }
 
 async function listFlaggedBatches(req, res) {
   const merchantIds = await scopedMerchantIds(req);
-  const query = { status: 'flagged', ...(merchantIds ? { merchantId: { $in: merchantIds } } : {}) };
-  const batches = await Batch.find(query).populate('merchantId', 'storeName category address barangay municipality verificationStatus').sort({ updatedAt: -1 }).limit(100).lean();
+  const query = { $or: [{ status: 'flagged' }, { 'reportLogs.0': { $exists: true } }], ...(merchantIds ? { merchantId: { $in: merchantIds } } : {}) };
+  const batches = await Batch.find(query).select('+reportLogs').populate('merchantId', 'storeName category address barangay municipality verificationStatus').sort({ updatedAt: -1 }).limit(200).lean();
   res.json({ success: true, data: { batches } });
 }
 
 async function reviewFlaggedBatch(req, res) {
   const action = req.body?.action;
-  if (!['restore', 'suspend'].includes(action)) throw httpError(400, 'INVALID_FLAGGED_ACTION', 'Choose restore or suspend merchant.');
+  if (!['restore', 'dismiss', 'recall', 'suspend'].includes(action)) throw httpError(400, 'INVALID_FLAGGED_ACTION', 'Choose dismiss, recall, restore, or suspend.');
   const merchantIds = await scopedMerchantIds(req);
-  const scope = { _id: req.params.batchId, status: 'flagged', ...(merchantIds ? { merchantId: { $in: merchantIds } } : {}) };
-  const batch = await Batch.findOne(scope).select('merchantId expiresAt safeUntil').lean();
+  const scope = { _id: req.params.batchId, $or: [{ status: 'flagged' }, { 'reportLogs.0': { $exists: true } }], ...(merchantIds ? { merchantId: { $in: merchantIds } } : {}) };
+  const batch = await Batch.findOne(scope).select('+reportLogs merchantId expiresAt safeUntil').lean();
   if (!batch) throw httpError(404, 'FLAGGED_BATCH_NOT_FOUND', 'Flagged listing was not found in your jurisdiction.');
-  if (action === 'restore') {
-    const restored = await Batch.findOneAndUpdate({ ...scope, expiresAt: { $gt: new Date() }, safeUntil: { $gt: new Date() } }, { $set: { status: 'active', reportCount: 0, reportedByDevices: [], spoilageReportCount: 0, spoilageReportedByDevices: [], foodSafetyFlagged: false } }, { new: true, runValidators: true });
+  if (action === 'restore' || action === 'dismiss') {
+    const now = new Date();
+    const restored = await Batch.findOneAndUpdate({ ...scope, expiresAt: { $gt: now }, safeUntil: { $gt: now } }, { $set: { status: 'active', reportCount: 0, reportedByDevices: [], spoilageReportCount: 0, spoilageReportedByDevices: [], verifiedSpoilageFlags: 0, verifiedTotalFlags: 0, foodSafetyFlagged: false, reportLogs: (batch.reportLogs || []).map((entry) => ({ ...entry, dismissed: true })) } }, { new: true, runValidators: true });
     if (!restored) throw httpError(409, 'BATCH_NOT_RESTORABLE', 'This batch has expired or passed its food-safety cutoff and cannot be restored.');
+    if (action === 'dismiss') {
+      const reporterHashes = [...new Set((batch.reportLogs || []).filter((entry) => !entry.dismissed).map((entry) => entry.deviceToken).filter(Boolean))];
+      for (const deviceTokenHash of reporterHashes) {
+        const reporter = await ReportReporter.findOneAndUpdate({ deviceTokenHash }, { $inc: { falseFlags: 1 }, $setOnInsert: { deviceTokenHash } }, { upsert: true, new: true });
+        if (reporter.falseFlags >= 2) await ReportReporter.updateOne({ _id: reporter._id }, { $set: { shadowMuted: true } });
+      }
+    }
     invalidateBatchCache();
     return res.json({ success: true, data: { batch: { id: restored._id.toString(), status: restored.status } } });
+  }
+  if (action === 'recall') {
+    const session = await mongoose.startSession();
+    try {
+      await session.withTransaction(async () => {
+        await Batch.updateOne({ _id: batch._id }, { $set: { status: 'flagged', foodSafetyFlagged: true } }, { session });
+        const pendingNgoClaims = await Claim.aggregate([{ $match: { batchId: batch._id, status: 'pending', isNgoClaim: true, claimantUserId: { $exists: true } } }, { $group: { _id: '$claimantUserId', count: { $sum: 1 } } }]).session(session);
+        await Claim.updateMany({ batchId: batch._id, status: 'pending' }, { $set: { status: 'recalled' } }, { session });
+        for (const row of pendingNgoClaims) await User.updateOne({ _id: row._id, role: 'ngo' }, { $inc: { activeNgoClaimCount: -row.count } }, { session });
+      });
+    } finally { await session.endSession(); }
+    invalidateBatchCache();
+    return res.json({ success: true, data: { batch: { id: String(batch._id), status: 'flagged' }, recalled: true } });
   }
   const merchant = await User.findOneAndUpdate({ _id: batch.merchantId, role: 'merchant', ...adminScope(req) }, { $set: { verificationStatus: 'suspended', verified: false, verificationReviewedAt: new Date(), verifiedBy: req.user.id, verifiedAt: new Date() } }, { new: true });
   if (!merchant) throw httpError(404, 'MERCHANT_NOT_FOUND', 'Merchant was not found in your jurisdiction.');
   await Batch.updateMany({ merchantId: merchant._id, status: 'active' }, { $set: { status: 'withdrawn' } });
+  const pendingNgoClaims = await Claim.aggregate([{ $match: { merchantId: merchant._id, status: 'pending', isNgoClaim: true, claimantUserId: { $exists: true } } }, { $group: { _id: '$claimantUserId', count: { $sum: 1 } } }]);
+  await Claim.updateMany({ merchantId: merchant._id, status: 'pending' }, { $set: { status: 'recalled' } });
+  await Promise.all(pendingNgoClaims.map((row) => User.updateOne({ _id: row._id, role: 'ngo' }, { $inc: { activeNgoClaimCount: -row.count } })));
   invalidateBatchCache();
   res.json({ success: true, data: { merchant: { id: merchant._id.toString(), verificationStatus: merchant.verificationStatus } } });
 }
