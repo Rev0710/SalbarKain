@@ -5,7 +5,7 @@ import { isWithinIloilo } from '../utils/iloiloMap.js';
 import LocationPicker from '../components/LocationPicker.jsx';
 import './AuthPage.css';
 
-const MUNICIPALITIES = ['Iloilo City', 'Pavia', 'Santa Barbara', 'Oton', 'Leganes', 'Zarraga', 'Cabatuan', 'Pototan', 'Passi City', 'Miagao', 'Other Iloilo Municipality'];
+const MUNICIPALITIES = ['Iloilo City', 'Pavia', 'Santa Barbara', 'Oton', 'Leganes', 'Zarraga', 'Cabatuan', 'Pototan', 'Passi City', 'Miagao', 'Tubungan', 'Other Iloilo Municipality'];
 const SIGN_IN_ROLES = [
   { value: 'merchant', title: 'Merchant', subtitle: 'Bakery / Eatery', mark: 'M' },
   { value: 'ngo', title: 'NGO / Shelter', subtitle: 'Accredited Relief', mark: 'N' },

@@ -120,6 +120,7 @@ button:disabled { cursor: not-allowed; opacity: .55; }
 .partner-municipality-row { display:flex; flex:0 0 auto; gap:7px; overflow-x:auto; padding:0 17px 13px; scrollbar-width:thin; }
 .partner-municipality-pill { display:inline-flex; align-items:center; gap:7px; flex:0 0 auto; min-height:34px; padding:0 10px; border:1px solid #E2E8F0; border-radius:999px; color:#334155; background:#FFFFFF; font-size:11px; font-weight:560; white-space:nowrap; }
 .partner-municipality-pill span { display:inline-grid; min-width:19px; height:19px; place-items:center; padding:0 4px; border-radius:999px; color:#475569; background:#F1F5F9; font-size:10px; font-variant-numeric:tabular-nums; }
+.partner-municipality-pill .partner-municipality-dot { display:inline-block; flex:0 0 6px; width:6px; height:6px; border-radius:50%; background:#15803D; }
 .partner-municipality-pill.active { border-color:#15803D; color:#15803D; background:#F0FDF4; }
 .partner-municipality-pill.active span { color:#FFFFFF; background:#15803D; }
 .partner-radar-list { display:flex; flex:1 1 auto; flex-direction:column; min-height:0; gap:0; overflow:auto; padding:0 17px 12px; }

@@ -1,13 +1,24 @@
 import { useMemo, useState } from 'react';
 import { safeImageUrl } from '../utils/safeImageUrl.js';
 
-const MUNICIPALITIES = ['All Iloilo', 'Iloilo City', 'Pavia', 'Santa Barbara', 'Oton', 'Leganes'];
+const CORE_MUNICIPALITIES = ['Iloilo City', 'Pavia', 'Santa Barbara', 'Oton', 'Leganes'];
+
+function normalizedMunicipality(value = '') {
+  const text = String(value || '').trim().replace(/\s+/g, ' ');
+  if (!text || /^unspecified$/i.test(text) || /^iloilo province$/i.test(text)) return '';
+  if (/^other iloilo municipality$/i.test(text)) return 'Other Iloilo Municipality';
+  const normalized = text.toLowerCase()
+    .replace(/^(municipality|city)\s+of\s+/, '')
+    .replace(/\s+municipality$/, '')
+    .trim();
+  if (normalized === 'iloilo' || normalized === 'iloilo city') return 'Iloilo City';
+  const baseline = CORE_MUNICIPALITIES.find(name => name.toLowerCase() === normalized);
+  if (baseline) return baseline;
+  return normalized.replace(/\b\w/g, character => character.toUpperCase());
+}
 
 function canonicalMunicipality(value = '') {
-  const raw = String(value).trim().toLowerCase();
-  const stripped = raw.replace(/^(municipality|city)\s+of\s+/, '').replace(/\s+municipality$/, '').trim();
-  if (raw === 'city of iloilo' || stripped === 'iloilo' || stripped === 'iloilo city') return 'Iloilo City';
-  return MUNICIPALITIES.find((name) => name !== 'All Iloilo' && name.toLowerCase() === stripped) || String(value).trim();
+  return normalizedMunicipality(value);
 }
 
 function cleanLocationPart(value = '') {
@@ -71,19 +82,36 @@ export default function IloiloPartnerPanel({ partners, fallbackBatches, loading,
     for (const store of fallback) if (!merged.has(String(store._id))) merged.set(String(store._id), store);
     return [...merged.values()];
   }, [partners, fallbackBatches]);
+  const municipalities = useMemo(() => {
+    const unique = new Map();
+    for (const town of CORE_MUNICIPALITIES) unique.set(town.toLowerCase(), town);
+    const sources = [
+      ...(Array.isArray(partners) ? partners : []).map(store => store?.municipality),
+      ...(Array.isArray(fallbackBatches) ? fallbackBatches : []).map(batch => batch?.merchantId?.municipality),
+    ];
+    for (const source of sources) {
+      const town = normalizedMunicipality(source);
+      if (town && !unique.has(town.toLowerCase())) unique.set(town.toLowerCase(), town);
+    }
+    return ['All Iloilo', ...[...unique.values()].sort((a, b) => a.localeCompare(b, 'en', { sensitivity: 'base' }))];
+  }, [partners, fallbackBatches]);
   const filtered = useMemo(() => {
     const matching = directory.filter((store) => selectedMunicipality === 'All Iloilo' || canonicalMunicipality(store.municipality) === selectedMunicipality);
     if (!userCoords) return matching;
     return matching.map(store => ({ ...store, distanceKm: distanceKmFromGeoJson(userCoords, store.location) }))
       .sort((a, b) => (a.distanceKm ?? Infinity) - (b.distanceKm ?? Infinity));
   }, [directory, selectedMunicipality, userCoords, distanceKmFromGeoJson]);
-  const activeBatchesIn = municipality => directory.reduce((total, store) => total + (municipality === 'All Iloilo' || canonicalMunicipality(store.municipality) === municipality ? Math.max(0, Number(store.activeBatchCount) || 0) : 0), 0);
+  const activeBatchesIn = municipality => {
+    const batches = Array.isArray(fallbackBatches) ? fallbackBatches : [];
+    return batches.filter(batch => municipality === 'All Iloilo' || canonicalMunicipality(batch?.merchantId?.municipality) === municipality).length;
+  };
+  const hasVerifiedPartner = municipality => municipality !== 'All Iloilo' && directory.some(store => canonicalMunicipality(store.municipality) === municipality && (store.verificationStatus === 'verified' || store.verified === true));
   return <aside className="partner-hub-shell" aria-label="Iloilo surplus hubs and pickup radar">
     <div className="partner-hub-header">
       <div><p className="eyebrow">Iloilo surplus hubs</p><h2>Partner storefronts &amp; barangay radar</h2><p className="partner-hub-subtitle">Verified food partners across Iloilo City and nearby municipalities.</p></div>
     </div>
     <div className="partner-municipality-row" role="group" aria-label="Filter partners by municipality">
-      {MUNICIPALITIES.map((municipality) => <button key={municipality} type="button" className={`partner-municipality-pill ${selectedMunicipality === municipality ? 'active' : ''}`} aria-pressed={selectedMunicipality === municipality} onClick={() => onMunicipalityChange(municipality)}>{municipality}<span>{activeBatchesIn(municipality)}</span></button>)}
+      {municipalities.map((town) => <button key={town} type="button" className={`partner-municipality-pill ${selectedMunicipality === town ? 'active' : ''}`} aria-pressed={selectedMunicipality === town} aria-label={`${town}, ${activeBatchesIn(town)} active batches${hasVerifiedPartner(town) ? ', verified partner' : ''}`} onClick={() => onMunicipalityChange(town)}>{town}{hasVerifiedPartner(town) && <i className="partner-municipality-dot" aria-label="Verified partner available" title="Verified partner available" />}<span>{activeBatchesIn(town)}</span></button>)}
     </div>
     <div className="partner-radar-list" aria-live="polite">
       {loading && <p className="partner-radar-note" role="status">Loading verified food partners…</p>}
