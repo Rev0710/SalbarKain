@@ -321,6 +321,7 @@ async function reportBatch(req, res) {
   const reporterHash = hashIdentifier(deviceToken);
   if (!reporterHash) throw httpError(503, 'REPORTING_NOT_CONFIGURED', 'Batch reporting is temporarily unavailable.');
   const reason = req.body?.reason === 'spoilage' ? 'spoilage' : 'general';
+  const note = typeof req.body?.note === 'string' ? req.body.note.trim().slice(0, 140) : '';
   const spoilage = reason === 'spoilage';
   const countField = spoilage ? 'spoilageReportCount' : 'reportCount';
   const devicesField = spoilage ? 'spoilageReportedByDevices' : 'reportedByDevices';
@@ -332,6 +333,7 @@ async function reportBatch(req, res) {
       [countField]: { $add: [{ $ifNull: [`$${countField}`, 0] }, 1] },
       status: { $cond: [{ $gte: [{ $add: [{ $ifNull: [`$${countField}`, 0] }, 1] }, threshold] }, 'flagged', '$status'] },
       foodSafetyFlagged: spoilage ? { $cond: [{ $gte: [{ $add: [{ $ifNull: ['$spoilageReportCount', 0] }, 1] }, threshold] }, true, '$foodSafetyFlagged'] } : '$foodSafetyFlagged',
+      reportNotes: { $concatArrays: [{ $ifNull: ['$reportNotes', []] }, [{ reason: { $literal: reason }, note: { $literal: note }, reportedAt: new Date() }]] },
     } }], { new: true, updatePipeline: true },
   );
   if (!batch) {

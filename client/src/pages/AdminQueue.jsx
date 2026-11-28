@@ -8,6 +8,7 @@ import { ILOILO_CENTER, ILOILO_MAP_OPTIONS, isWithinIloilo } from '../utils/iloi
 import ReliableTileLayer from '../components/ReliableTileLayer.jsx';
 import OfflineIloiloLayer from '../components/OfflineIloiloLayer.jsx';
 import { safeImageUrl } from '../utils/safeImageUrl.js';
+import ConfirmModal from '../components/ConfirmModal.jsx';
 
 const TABS = [
   ['overview', 'Municipal overview'], ['verifications', 'KYB & account status'], ['flagged', 'Trust & safety'],
@@ -94,7 +95,7 @@ function AdminSkeleton() {
 function LguInviteManager({ onNotice }) {
   const municipalities = ['Iloilo City', 'Pavia', 'Santa Barbara', 'Oton', 'Leganes', 'Zarraga', 'Cabatuan', 'Pototan', 'Passi City', 'Miagao', 'Tubungan', 'Other Iloilo Municipality'];
   const [form, setForm] = useState({ officerName: '', email: '', assignedMunicipality: 'Pavia' });
-  const [officers, setOfficers] = useState([]); const [loading, setLoading] = useState(true); const [busy, setBusy] = useState(false); const [officerBusy, setOfficerBusy] = useState(''); const [error, setError] = useState(''); const [invite, setInvite] = useState(null); const [copied, setCopied] = useState(false);
+  const [officers, setOfficers] = useState([]); const [loading, setLoading] = useState(true); const [busy, setBusy] = useState(false); const [officerBusy, setOfficerBusy] = useState(''); const [error, setError] = useState(''); const [invite, setInvite] = useState(null); const [copied, setCopied] = useState(false); const [officerConfirmation, setOfficerConfirmation] = useState(null);
   const load = useCallback(async () => {
     setLoading(true);
     try { const { data } = await api.get('/admin/lgu-officers'); setOfficers(asArray(data?.data?.officers)); setError(''); }
@@ -139,12 +140,24 @@ function LguInviteManager({ onNotice }) {
     finally { setOfficerBusy(''); }
   }
   async function changeOfficerStatus(officer, status) {
-    const action = status === 'suspended' ? 'revoke access to' : 'restore access for';
-    if (!window.confirm(`Are you sure you want to ${action} ${officer.officerName}?`)) return;
+    const officerName = officer.officerName || 'This officer';
+    const municipality = officer.assignedMunicipality || 'their municipality';
+    setOfficerConfirmation({
+      title: status === 'suspended' ? 'Revoke LGU Officer Access?' : 'Restore LGU Officer Access?',
+      message: status === 'suspended' ? `${officerName} (${municipality}) will immediately lose access to the LGU Command Center.` : `${officerName} (${municipality}) will regain access to the LGU Command Center.`,
+      confirmLabel: status === 'suspended' ? 'Revoke Access' : 'Restore Access',
+      variant: status === 'suspended' ? 'danger' : 'primary',
+      status,
+      officer,
+    });
+  }
+  async function confirmOfficerStatus() {
+    if (!officerConfirmation) return;
+    const { officer, status } = officerConfirmation;
     setOfficerBusy(officer.id); setError('');
     try { await api.patch(`/admin/officers/${encodeURIComponent(officer.id)}/status`, { status }); await load(); onNotice(status === 'suspended' ? 'Municipal LGU access revoked.' : 'Municipal LGU access restored.'); }
     catch (requestError) { setError(requestError.response?.data?.message || 'Municipal officer access could not be updated.'); }
-    finally { setOfficerBusy(''); }
+    finally { setOfficerBusy(''); setOfficerConfirmation(null); }
   }
   return <div className="admin-invite-layout">
     <section className="panel"><h2>Invite a municipal LGU admin</h2><p className="panel-subtitle">Only the Provincial Super-Admin can issue these one-time invitations. The officer sets their own password from the link, which expires after 24 hours.</p>
@@ -161,6 +174,7 @@ function LguInviteManager({ onNotice }) {
       {error && <p className="form-error" role="alert">{error}</p>}
       {loading ? <p className="panel-subtitle" role="status">Loading municipal admins…</p> : officers.length ? <div className="admin-account-cards">{officers.map(officer => { const status = officer.verificationStatus === 'verified' ? 'Active' : officer.verificationStatus === 'suspended' ? 'Suspended' : officer.inviteExpires && new Date(officer.inviteExpires) < new Date() ? 'Invite expired' : 'Pending activation'; return <article className="admin-account-card" key={officer.id}><div className="admin-account-card-head"><div className="admin-account-avatar admin-officer-avatar">{String(officer.officerName || 'LG').trim().charAt(0).toUpperCase()}</div><div className="admin-account-card-title"><strong>{asText(officer.officerName, 'LGU officer')}</strong><div><span className="admin-role-tag">Municipal LGU Admin</span><span className={`admin-status-badge ${status === 'Active' ? 'verified' : status === 'Suspended' ? 'suspended' : 'pending'}`}>{status}</span></div></div></div><div className="admin-account-card-meta"><span>{asText(officer.email)} · {asText(officer.assignedMunicipality)}</span><span>{officer.createdAt ? `Added ${new Date(officer.createdAt).toLocaleDateString()}` : 'Date unavailable'}</span></div><div className="admin-account-card-actions">{status !== 'Active' && status !== 'Suspended' && <><button type="button" className="secondary-button compact" disabled={officerBusy === officer.id} onClick={() => copyOfficerInvite(officer)}>{officerBusy === officer.id ? 'Preparing…' : 'Copy Invite Link'}</button><button type="button" className="primary-button compact" disabled={officerBusy === officer.id} onClick={() => resendOfficerInvite(officer)}>{officerBusy === officer.id ? 'Sending…' : 'Resend SMTP Email'}</button></>}{status === 'Active' && <button type="button" className="secondary-button compact admin-suspend-button" disabled={officerBusy === officer.id} onClick={() => changeOfficerStatus(officer, 'suspended')}>Revoke Access</button>}{status === 'Suspended' && <button type="button" className="primary-button compact" disabled={officerBusy === officer.id} onClick={() => changeOfficerStatus(officer, 'verified')}>Restore Access</button>}</div></article>; })}</div> : <div className="empty-state"><h3>No municipal officers yet</h3><p>Invited officers will appear here until they activate their accounts.</p></div>}
     </section>
+    <ConfirmModal isOpen={Boolean(officerConfirmation)} title={officerConfirmation?.title || ''} message={officerConfirmation?.message || ''} confirmLabel={officerConfirmation?.confirmLabel} variant={officerConfirmation?.variant || 'primary'} isLoading={Boolean(officerBusy)} onConfirm={confirmOfficerStatus} onCancel={() => { if (!officerBusy) setOfficerConfirmation(null); }} />
   </div>;
 }
 function statusLabel(value) {
@@ -208,6 +222,7 @@ export default function AdminQueue({ session = {}, onNotice = () => {} }) {
   const [ledgerMunicipality, setLedgerMunicipality] = useState('all'); const [certificatePartner, setCertificatePartner] = useState(null);
   const [selected, setSelected] = useState(null); const [documentUrl, setDocumentUrl] = useState(''); const [rejectionReason, setRejectionReason] = useState('');
   const [loading, setLoading] = useState(true); const [busy, setBusy] = useState(''); const [error, setError] = useState(''); const [waking, setWaking] = useState(false);
+  const [confirmation, setConfirmation] = useState(null); const [confirmationBusy, setConfirmationBusy] = useState(false);
 
   const load = useCallback(async ({ manual = false } = {}) => {
     setLoading(true); setError(''); setWaking(false);
@@ -258,7 +273,16 @@ export default function AdminQueue({ session = {}, onNotice = () => {} }) {
 
   async function reviewApplicant(decision, applicant = selected) {
     if (!applicant?.id) return;
-    if (decision === 'suspend' && !window.confirm(`Suspend ${applicant.storeName || applicant.organizationName || applicant.name}?`)) return;
+    if (decision === 'suspend') {
+      const name = applicant.storeName || applicant.organizationName || applicant.name || 'This partner';
+      setConfirmation({ title: 'Suspend Partner Account?', message: `${name} will lose access, and its active listings will be withdrawn.`, confirmLabel: 'Suspend Account', variant: 'danger', run: () => saveApplicantDecision(decision, applicant) });
+      return;
+    }
+    return saveApplicantDecision(decision, applicant);
+  }
+
+  async function saveApplicantDecision(decision, applicant) {
+    if (!applicant?.id) return;
     setBusy(applicant.id);
     try {
       await api.patch(`/admin/verifications/${encodeURIComponent(applicant.id)}`, { decision, rejectionReason: applicant.id === selected?.id ? rejectionReason.trim() : '' });
@@ -270,10 +294,28 @@ export default function AdminQueue({ session = {}, onNotice = () => {} }) {
 
   async function reviewFlag(batchId, action) {
     if (!batchId) return;
+    if (action === 'suspend') {
+      const batch = flaggedBatches.find(item => String(item?._id) === String(batchId));
+      const merchantName = batch?.merchantId?.storeName || 'The listing merchant';
+      setConfirmation({ title: 'Safety Recall & Suspend Merchant?', message: `Remove “${batch?.itemName || 'this listing'}” and suspend ${merchantName} while the food-safety concern is reviewed?`, confirmLabel: 'Recall & Suspend', variant: 'danger', run: () => saveFlagReview(batchId, action) });
+      return;
+    }
+    return saveFlagReview(batchId, action);
+  }
+
+  async function saveFlagReview(batchId, action) {
+    if (!batchId) return;
     setBusy(batchId);
     try { await api.patch(`/admin/flagged/${encodeURIComponent(batchId)}`, { action }); await load(); onNotice(action === 'restore' ? 'Listing restored.' : 'Merchant suspended and active listings withdrawn.'); }
     catch (actionError) { onNotice(actionError.response?.data?.message || 'The flagged listing action could not be saved.'); }
     finally { setBusy(''); }
+  }
+
+  async function confirmAdminAction() {
+    if (!confirmation?.run || confirmationBusy) return;
+    setConfirmationBusy(true);
+    try { await confirmation.run(); }
+    finally { setConfirmationBusy(false); setConfirmation(null); }
   }
 
   async function setCertification(row, certified) {
@@ -374,7 +416,7 @@ export default function AdminQueue({ session = {}, onNotice = () => {} }) {
         <div className="admin-account-tools"><label className="field-label admin-account-search">Search partners<input className="field-input" type="search" value={accountSearch} onChange={event => setAccountSearch(event.target.value)} placeholder="Search store name, NGO, or barangay..." /></label><label className="field-label">Role<select className="field-input" value={roleFilter} onChange={event => setRoleFilter(event.target.value)}><option value="all">All Roles</option><option value="merchants">Merchants</option><option value="ngos">NGOs</option></select></label></div>
         {filteredAccounts.length ? <div className="admin-account-cards">{filteredAccounts.map((user, index) => { const accountStatus = user?.verificationStatus || (user?.verified ? 'verified' : 'pending'); const name = user?.storeName || user?.organizationName || user?.name || 'Partner account'; const image = safeImageUrl(user?.storefrontPhotoUrl); return <article className="admin-account-card" key={user?.id || `account-${index}`}><div className="admin-account-card-head"><div className="admin-account-avatar">{image ? <img src={image} alt="" onError={event => { event.currentTarget.hidden = true; }} /> : <span>{String(name).trim().charAt(0).toUpperCase() || 'P'}</span>}</div><div className="admin-account-card-title"><strong>{name}</strong><div><span className="admin-role-tag">{user?.role === 'ngo' ? 'NGO / shelter' : 'Merchant'}</span><span className={`admin-status-badge ${accountStatus}`}>{statusLabel(accountStatus)}</span></div></div></div><div className="admin-account-card-meta"><span>{locationText(user?.barangay, 'General Area')}, {locationText(user?.municipality, 'Iloilo City')}</span><span>{user?.createdAt && Number.isFinite(new Date(user.createdAt).getTime()) ? `Registered ${new Date(user.createdAt).toLocaleDateString()}` : 'Registration date unavailable'}</span><strong>{formatNumber(user?.totalRescuesCompleted)} completed rescues</strong></div><div className="admin-account-card-actions"><button type="button" className="secondary-button compact" onClick={() => { setSelected(user); setRejectionReason(''); }}>Inspect KYB Permit</button>{accountStatus === 'pending' && <><button type="button" className="primary-button compact" disabled={busy === user?.id || !user?.hasVerificationDocument} onClick={() => reviewApplicant('approve', user)}>{busy === user?.id ? 'Saving…' : 'Approve & Verify'}</button><button type="button" className="secondary-button compact admin-suspend-button" disabled={busy === user?.id} onClick={() => { setSelected(user); setRejectionReason(''); }}>Reject</button></>}{accountStatus === 'verified' && <button type="button" className="secondary-button compact admin-suspend-button" disabled={busy === user?.id} onClick={() => reviewApplicant('suspend', user)}>{busy === user?.id ? 'Saving…' : 'Suspend Account'}</button>}{['rejected', 'suspended'].includes(accountStatus) && <button type="button" className="primary-button compact" disabled={busy === user?.id || !user?.hasVerificationDocument} onClick={() => reviewApplicant('approve', user)}>{busy === user?.id ? 'Saving…' : 'Re-Verify / Restore'}</button>}</div></article>; })}</div> : <div className="empty-state"><h2>No matching partner accounts</h2><p>Adjust the status, search text, or role filter to see other applications.</p></div>}</section>}
 
-      {tab === 'flagged' && <section className="panel"><div className="admin-ledger-heading"><div><h2>Trust, safety &amp; flagged listings</h2><p className="panel-subtitle">Review community reports and food-safety concerns before restoring a listing.</p></div><span className="admin-count">{formatNumber(flaggedBatches.length)} open reviews</span></div><div className="admin-status-filters" role="group" aria-label="Filter flagged listings">{[['all', 'All reports'], ['community', 'Community reports'], ['safety', 'Food safety']].map(([key, label]) => <button key={key} type="button" className={`filter-pill ${flaggedFilter === key ? 'active' : ''}`} aria-pressed={flaggedFilter === key} onClick={() => setFlaggedFilter(key)}>{label}{key === 'safety' && safetyReviewCount > 0 ? ` (${safetyReviewCount})` : ''}</button>)}</div>{filteredFlaggedBatches.length ? <div className="inventory-list">{filteredFlaggedBatches.map((batch, index) => <article key={batch?._id || `flagged-${index}`} className="inventory-row"><img src={safeImageUrl(batch?.photoUrl) || '/demo-images/pandesal.svg'} alt={batch?.itemName ? `Photo of ${batch.itemName}` : 'Flagged batch'} /><div><h3>{asText(batch?.itemName, 'Surplus listing')}</h3><p>{asText(batch?.merchantId?.storeName, 'Local food partner')} · {locationText(batch?.merchantId?.barangay, 'General Area')}, {locationText(batch?.merchantId?.municipality, 'Iloilo City')}</p><p>{batch?.foodSafetyFlagged ? `${formatNumber(batch?.spoilageReportCount)} food-safety reports` : `${formatNumber(batch?.reportCount)} community reports`} · {formatNumber(batch?.remainingQty)} portions remaining</p><small>Reported {batch?.updatedAt && Number.isFinite(new Date(batch.updatedAt).getTime()) ? new Date(batch.updatedAt).toLocaleString() : 'date unavailable'}</small><span className={`admin-status-badge ${batch?.foodSafetyFlagged ? 'pending' : ''}`}>{batch?.foodSafetyFlagged ? 'Food safety review' : 'Community flagged'}</span></div><div className="admin-flag-actions"><button type="button" className="primary-button compact" disabled={busy === batch?._id} onClick={() => reviewFlag(batch?._id, 'restore')}>{busy === batch?._id ? 'Saving…' : 'Clear flags & restore'}</button><button type="button" className="secondary-button compact admin-suspend-button" disabled={busy === batch?._id} onClick={() => reviewFlag(batch?._id, 'suspend')}>Remove &amp; suspend merchant</button></div></article>)}</div> : <div className="empty-state"><h2>{flaggedBatches.length ? 'No reports in this filter' : 'No flagged listings'}</h2><p>{flaggedBatches.length ? 'Choose another report type to review.' : 'Nothing hidden in this jurisdiction needs action.'}</p></div>}</section>}
+      {tab === 'flagged' && <section className="panel"><div className="admin-ledger-heading"><div><h2>Trust, safety &amp; flagged listings</h2><p className="panel-subtitle">Review community reports and food-safety concerns before restoring a listing.</p></div><span className="admin-count">{formatNumber(flaggedBatches.length)} open reviews</span></div><div className="admin-status-filters" role="group" aria-label="Filter flagged listings">{[['all', 'All reports'], ['community', 'Community reports'], ['safety', 'Food safety']].map(([key, label]) => <button key={key} type="button" className={`filter-pill ${flaggedFilter === key ? 'active' : ''}`} aria-pressed={flaggedFilter === key} onClick={() => setFlaggedFilter(key)}>{label}{key === 'safety' && safetyReviewCount > 0 ? ` (${safetyReviewCount})` : ''}</button>)}</div>{filteredFlaggedBatches.length ? <div className="inventory-list">{filteredFlaggedBatches.map((batch, index) => <article key={batch?._id || `flagged-${index}`} className="inventory-row"><img src={safeImageUrl(batch?.photoUrl) || '/demo-images/pandesal.svg'} alt={batch?.itemName ? `Photo of ${batch.itemName}` : 'Flagged batch'} /><div><h3>{asText(batch?.itemName, 'Surplus listing')}</h3><p>{asText(batch?.merchantId?.storeName, 'Local food partner')} · {locationText(batch?.merchantId?.barangay, 'General Area')}, {locationText(batch?.merchantId?.municipality, 'Iloilo City')}</p><p>{batch?.foodSafetyFlagged ? `${formatNumber(batch?.spoilageReportCount)} food-safety reports` : `${formatNumber(batch?.reportCount)} community reports`} · {formatNumber(batch?.remainingQty)} portions remaining</p>{batch?.reportNotes?.at?.(-1)?.note && <p className="admin-report-note"><strong>Latest community note:</strong> {batch.reportNotes.at(-1).note}</p>}<small>Reported {batch?.updatedAt && Number.isFinite(new Date(batch.updatedAt).getTime()) ? new Date(batch.updatedAt).toLocaleString() : 'date unavailable'}</small><span className={`admin-status-badge ${batch?.foodSafetyFlagged ? 'pending' : ''}`}>{batch?.foodSafetyFlagged ? 'Food safety review' : 'Community flagged'}</span></div><div className="admin-flag-actions"><button type="button" className="primary-button compact" disabled={busy === batch?._id} onClick={() => reviewFlag(batch?._id, 'restore')}>{busy === batch?._id ? 'Saving…' : 'Clear flags & restore'}</button><button type="button" className="secondary-button compact admin-suspend-button" onClick={() => reviewFlag(batch?._id, 'suspend')}>Remove &amp; suspend merchant</button></div></article>)}</div> : <div className="empty-state"><h2>{flaggedBatches.length ? 'No reports in this filter' : 'No flagged listings'}</h2><p>{flaggedBatches.length ? 'Choose another report type to review.' : 'Nothing hidden in this jurisdiction needs action.'}</p></div>}</section>}
 
       {tab === 'ledger' && <section className="panel"><div className="admin-ledger-heading"><div><h2>MENRO barangay impact ledger</h2><p className="panel-subtitle">Completed rescues grouped by municipality and barangay.</p></div><div className="admin-ledger-actions"><label className="field-label">Municipality filter<select className="field-input" value={ledgerMunicipality} onChange={event => setLedgerMunicipality(event.target.value)}><option value="all">All municipalities</option>{[...new Set(menroStats.map(row => row?.municipality).filter(Boolean))].sort().map(municipality => <option key={municipality} value={municipality}>{municipality}</option>)}</select></label><button type="button" className="primary-button" onClick={() => exportLedger()}>Download MENRO CSV</button></div></div>{visibleLedger.length ? <div className="admin-table-wrap"><table className="admin-impact-table"><thead><tr><th>Municipality</th><th>Barangay</th><th>Completed rescues</th><th>Food diverted (kg)</th><th>CO₂e prevented (kg)</th></tr></thead><tbody>{visibleLedger.map((row, index) => <tr key={`${asText(row?.municipality, 'municipality')}-${asText(row?.barangay, 'barangay')}-${index}`}><td>{asText(row?.municipality)}</td><td>{asText(row?.barangay)}</td><td>{formatNumber(row?.mealsSaved)}</td><td>{formatNumber(row?.foodDivertedKg, 2)}</td><td>{formatNumber(row?.co2PreventedKg, 2)}</td></tr>)}</tbody><tfoot><tr><th colSpan="2">Total Across Jurisdiction{ledgerMunicipality !== 'all' ? ` · ${ledgerMunicipality}` : ''}</th><th>{formatNumber(ledgerTotals.meals)} Rescues</th><th>{formatNumber(ledgerTotals.foodKg, 2)} kg</th><th>{formatNumber(ledgerTotals.co2Kg, 2)} kg CO₂e</th></tr></tfoot></table></div> : <div className="empty-state"><h2>No completed rescues yet</h2><p>Rescue totals will appear here after pickup passes are verified.</p></div>}</section>}
 
@@ -384,5 +426,6 @@ export default function AdminQueue({ session = {}, onNotice = () => {} }) {
     </>}
     <VerificationDialog user={selected} documentUrl={documentUrl} rejectionReason={rejectionReason} setRejectionReason={setRejectionReason} busy={Boolean(busy === selected?.id)} onClose={() => { setSelected(null); setDocumentUrl(''); }} onDecision={reviewApplicant} />
     {certificatePartner && <div className="overlay admin-modal-overlay" role="presentation" onMouseDown={event => event.target === event.currentTarget && setCertificatePartner(null)}><section className="dialog admin-certificate-preview" role="dialog" aria-modal="true" aria-labelledby="certificate-preview-title"><button className="close-button" type="button" aria-label="Close certificate preview" onClick={() => setCertificatePartner(null)}>×</button><p className="eyebrow">SalbarKain · Iloilo zero-waste network</p><h2 id="certificate-preview-title">Certificate preview</h2><div className="admin-certificate-sheet"><span>VERIFIED COMMUNITY PARTNER</span><h3>Certified Zero-Waste Partner</h3><p>This recognizes</p><strong>{certificatePartner.partner?.storeName || certificatePartner.partner?.name || 'Verified partner'}</strong><p>for rescuing {formatNumber(certificatePartner.partner?.rescues)} food packs and diverting {formatNumber((Number(certificatePartner.partner?.rescues) || 0) * 0.5, 2)} kg of food from waste.</p><small>{locationText(certificatePartner.partner?.barangay, 'General Area')}, {locationText(certificatePartner.partner?.municipality, 'Iloilo City')} · Threshold {certificatePartner.target} packs</small></div><button type="button" className="secondary-button" onClick={() => setCertificatePartner(null)}>Close preview</button></section></div>}
+    <ConfirmModal isOpen={Boolean(confirmation)} title={confirmation?.title || ''} message={confirmation?.message || ''} confirmLabel={confirmation?.confirmLabel} variant={confirmation?.variant || 'danger'} isLoading={confirmationBusy} onConfirm={confirmAdminAction} onCancel={() => { if (!confirmationBusy) setConfirmation(null); }} />
   </main>;
 }

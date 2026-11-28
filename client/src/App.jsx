@@ -10,6 +10,7 @@ import Toast from './components/Toast.jsx';
 import AuthPage from './pages/AuthPage.jsx';
 import RescueToast from './components/RescueToast.jsx';
 import Footer from './components/Footer.jsx';
+import ConfirmModal from './components/ConfirmModal.jsx';
 import HowItWorksPage from './pages/HowItWorksPage.jsx';
 import AboutPage from './pages/AboutPage.jsx';
 const ActivateLguPage = lazy(() => import('./pages/ActivateLguPage.jsx'));
@@ -165,7 +166,7 @@ function AppShell() {
     <RescueToast />
     <Footer />
     {loginOpen && <AuthPage onClose={() => setLoginOpen(false)} onLogin={handleLogin} />}
-    {logoutConfirmOpen && <div className="overlay logout-confirm-overlay" role="presentation" onMouseDown={event => event.target === event.currentTarget && setLogoutConfirmOpen(false)}><section className="dialog logout-confirm-dialog" role="alertdialog" aria-modal="true" aria-labelledby="logout-confirm-title" aria-describedby="logout-confirm-copy"><p className="eyebrow">Account session</p><h2 id="logout-confirm-title">Sign out of SalbarKain?</h2><p id="logout-confirm-copy">You can sign back in anytime to manage your store and pickup queue.</p><div className="logout-confirm-actions"><button type="button" className="secondary-button" onClick={() => setLogoutConfirmOpen(false)}>Stay signed in</button><button type="button" className="primary-button" onClick={logout}>Sign out</button></div></section></div>}
+    <ConfirmModal isOpen={logoutConfirmOpen} title="Sign out of SalbarKain?" message="You will need to sign back in to manage batches or verify pickups." confirmLabel="Sign out" cancelLabel="Stay signed in" onConfirm={logout} onCancel={() => setLogoutConfirmOpen(false)} />
     {impactOpen && <MyImpactModal session={session} onClose={() => setImpactOpen(false)} />}
     {claimBatch && <ClaimDrawer batch={claimBatch} verifiedNgo={session?.role === 'ngo' && (session?.verificationStatus === 'verified' || session?.verified === true)} onClose={() => setClaimBatch(null)} onSubmit={submitClaim} />}
     {pickupPass && <QrPassModal pass={pickupPass} onStatusChange={handlePickupStatusChange} onClose={(result) => { setPickupPass(null); if (result?.cancelled) { localStorage.removeItem(PICKUP_PASS_KEY); localStorage.removeItem(LEGACY_PICKUP_PASS_KEY); setSavedPass(null); setMarketRefresh(value => value + 1); setNotice('Pickup cancelled. The portions are back in the marketplace.'); } else if (result?.status) { localStorage.removeItem(PICKUP_PASS_KEY); localStorage.removeItem(LEGACY_PICKUP_PASS_KEY); setSavedPass(null); } }} />}

@@ -35,6 +35,7 @@ const schema = new Schema({
   status: { type: String, enum: ['active', 'sold_out', 'expired', 'withdrawn', 'flagged'], default: 'active', required: true, index: true },
   reportCount: { type: Number, default: 0, min: 0 },
   spoilageReportCount: { type: Number, default: 0, min: 0 },
+  reportNotes: { type: [{ reason: { type: String, enum: ['spoilage', 'general'] }, note: { type: String, trim: true, maxlength: 140 }, reportedAt: { type: Date, default: Date.now } }], default: [] },
   spoilageReportedByDevices: { type: [String], default: [], select: false },
   foodSafetyFlagged: { type: Boolean, default: false, index: true },
   reportedByDevices: { type: [String], default: [], select: false },

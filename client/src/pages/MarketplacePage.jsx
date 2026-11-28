@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { api } from '../utils/api.js';
 import BatchCard from '../components/BatchCard.jsx';
+import ReportModal from '../components/ReportModal.jsx';
 import IloiloPartnerPanel from '../components/IloiloPartnerPanel.jsx';
 import { BatchSkeletons } from '../components/LoadingSkeletons.jsx';
 import { getDeviceToken } from '../utils/identity.js';
@@ -45,6 +46,8 @@ export default function MarketplacePage({ session, onClaim, onPartnerSignIn, onN
   const [offline, setOffline] = useState(() => !navigator.onLine);
   const [userCoords, setUserCoords] = useState(null);
   const [locationStatus, setLocationStatus] = useState('idle');
+  const [reportBatch, setReportBatch] = useState(null);
+  const [reportBusy, setReportBusy] = useState(false);
   const hasLoadedBatches = useRef(false);
   const origin = useMemo(() => userCoords ? { lng: userCoords[0], lat: userCoords[1] } : null, [userCoords]);
   const refresh = useCallback(async (signal, point) => {
@@ -165,15 +168,17 @@ export default function MarketplacePage({ session, onClaim, onPartnerSignIn, onN
       .sort((a, b) => (a.distanceKm ?? Infinity) - (b.distanceKm ?? Infinity));
   }, [townBatches, filter, now, userCoords]);
   function claim(batch) { const isVerifiedNgo = session?.role === 'ngo' && (session?.verificationStatus === 'verified' || session?.verified === true); const flashActive = batch.isFlashDropEnabled && new Date(batch.expiresAt).getTime() - Date.now() <= 30 * 60 * 1000; const priorityActive = batch.ngoPriorityUntil && new Date(batch.ngoPriorityUntil).getTime() > Date.now(); if ((batch.isDonationOnly || priorityActive) && !isVerifiedNgo) { onNotice(batch.isDonationOnly ? 'NGO Donation Only. This batch is reserved for verified NGO and shelter accounts.' : `Reserved for Verified NGOs until ${new Date(batch.ngoPriorityUntil).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' })}.`); if (batch.isDonationOnly && !session) onPartnerSignIn(); return; } onClaim({ ...batch, verifiedNgo: isVerifiedNgo, flashActive, quotePrice: flashActive && isVerifiedNgo ? 0 : flashActive ? Number((Number(batch.price || 0) * 0.5).toFixed(2)) : Number(batch.price || 0) }); }
-  async function report(batch) {
+  async function submitReport({ type, note }) {
+    if (!reportBatch || reportBusy) return;
+    setReportBusy(true);
     try {
-      const answer = window.prompt('Report type: enter 1 for spoiled / unsafe food (auto-hides after 2 reports), or 2 for another listing concern.', '1');
-      if (answer === null) return;
-      const spoilage = answer.trim() === '1';
-      const { data } = await api.patch(`/batches/${batch._id}/report`, { deviceToken: getDeviceToken(), reason: spoilage ? 'spoilage' : 'general' });
-      onNotice(data.data.hidden ? 'This listing has been hidden and sent for review.' : spoilage ? 'Food safety report recorded.' : 'Thanks. Your report was recorded.');
+      const batch = reportBatch;
+      const { data } = await api.patch(`/batches/${batch._id}/report`, { deviceToken: getDeviceToken(), reason: type, note });
+      onNotice(data.data.hidden ? 'This listing has been hidden and sent for review.' : type === 'spoilage' ? 'Food safety report recorded.' : 'Thanks. Your report was recorded.');
       if (data.data.hidden) setBatches(current => current.filter(item => item._id !== batch._id));
+      setReportBatch(null);
     } catch (err) { onNotice(err.response?.data?.message || 'This listing could not be reported right now.'); }
+    finally { setReportBusy(false); }
   }
   const selectOnMap = useCallback(batch => { setSelected(batch._id); document.querySelector(`[data-batch="${batch._id}"]`)?.scrollIntoView({ behavior: 'smooth', block: 'nearest' }); }, []);
   const [mobileTab, setMobileTab] = useState('list');
@@ -195,5 +200,7 @@ export default function MarketplacePage({ session, onClaim, onPartnerSignIn, onN
     {locationStatus === 'denied' && <div className="location-denied-notice" role="status"><span>Location blocked — enable GPS in browser settings</span><button type="button" onClick={locateMe}>Retry</button></div>}
     <div className="market-filter-toolbar"><div className="filter-row" role="group" aria-label="Filter food batches">{FILTERS.map(label => <button key={label} className={`filter-pill ${filter === label ? 'active' : ''}`} aria-pressed={filter === label} onClick={() => setFilter(label)}>{label}</button>)}</div><button type="button" className="market-refresh-button" onClick={() => void refreshMarketplace()} disabled={isRefreshing} aria-label={isRefreshing ? 'Updating marketplace' : 'Refresh marketplace'}><span className={`market-refresh-icon ${isRefreshing ? 'animate-spin' : ''}`} aria-hidden="true">↻</span><span>{isRefreshing ? 'Updating' : 'Refresh'}</span></button></div>
     <div className="mobile-market-tabs" role="tablist" aria-label="Marketplace view"><button role="tab" aria-selected={mobileTab === 'map'} className={mobileTab === 'map' ? 'active' : ''} onClick={() => setMobileTab('map')}>Partner hubs</button><button role="tab" aria-selected={mobileTab === 'list'} className={mobileTab === 'list' ? 'active' : ''} onClick={() => setMobileTab('list')}>Batches <span>{visible.length}</span></button></div>
-    <div className="market-grid"><section className={`batch-list ${mobileTab === 'map' ? 'mobile-market-hidden' : ''}`} aria-label="Available surplus batches">{loading && <BatchSkeletons />}{error && <div className="empty-state" role="alert"><h2>Marketplace paused</h2><p>{error}</p><button className="secondary-button mt-4" onClick={() => void refreshMarketplace()}>Try again</button></div>}{!loading && !error && visible.length === 0 && <section className="evening-empty-state" aria-labelledby="evening-empty-title"><p className="eyebrow">Iloilo evening rescue schedule</p><h2 id="evening-empty-title">No batches match these filters yet</h2><p>Local bakeries and eateries typically post surplus between <strong>7:00 PM and 9:00 PM</strong>, near closing time.</p><div className="evening-schedule-window"><span>Typical drop window</span><strong>7:00–9:00 PM</strong></div><div className="evening-empty-actions"><button type="button" className="secondary-button" onClick={resetFilters}>Reset filters</button><button type="button" className="text-button" onClick={postSurplus}>Merchant? Post a batch</button></div></section>}{visible.map(batch => <div key={batch._id} data-batch={batch._id} className={selected === batch._id ? 'ring-2 ring-forest rounded-lg' : ''}><BatchCard batch={batch} isNgo={session?.role === 'ngo' && (session?.verificationStatus === 'verified' || session?.verified === true)} distanceLabel={formatDistance(batch.distanceKm)} onClaim={claim} onSignIn={onPartnerSignIn} onReport={report} /></div>)}</section><div className={mobileTab === 'list' ? 'mobile-market-hidden' : ''}><IloiloPartnerPanel partners={partners} fallbackBatches={batches} loading={partnersLoading} error={partnerError} selectedMunicipality={municipality} onMunicipalityChange={setMunicipality} userCoords={userCoords} distanceKmFromGeoJson={distanceKmFromGeoJson} formatDistance={formatDistance} /></div></div></main>;
+    <div className="market-grid"><section className={`batch-list ${mobileTab === 'map' ? 'mobile-market-hidden' : ''}`} aria-label="Available surplus batches">{loading && <BatchSkeletons />}{error && <div className="empty-state" role="alert"><h2>Marketplace paused</h2><p>{error}</p><button className="secondary-button mt-4" onClick={() => void refreshMarketplace()}>Try again</button></div>}{!loading && !error && visible.length === 0 && <section className="evening-empty-state" aria-labelledby="evening-empty-title"><p className="eyebrow">Iloilo evening rescue schedule</p><h2 id="evening-empty-title">No batches match these filters yet</h2><p>Local bakeries and eateries typically post surplus between <strong>7:00 PM and 9:00 PM</strong>, near closing time.</p><div className="evening-schedule-window"><span>Typical drop window</span><strong>7:00–9:00 PM</strong></div><div className="evening-empty-actions"><button type="button" className="secondary-button" onClick={resetFilters}>Reset filters</button><button type="button" className="text-button" onClick={postSurplus}>Merchant? Post a batch</button></div></section>}{visible.map(batch => <div key={batch._id} data-batch={batch._id} className={selected === batch._id ? 'ring-2 ring-forest rounded-lg' : ''}><BatchCard batch={batch} isNgo={session?.role === 'ngo' && (session?.verificationStatus === 'verified' || session?.verified === true)} distanceLabel={formatDistance(batch.distanceKm)} onClaim={claim} onSignIn={onPartnerSignIn} onReport={setReportBatch} /></div>)}</section><div className={mobileTab === 'list' ? 'mobile-market-hidden' : ''}><IloiloPartnerPanel partners={partners} fallbackBatches={batches} loading={partnersLoading} error={partnerError} selectedMunicipality={municipality} onMunicipalityChange={setMunicipality} userCoords={userCoords} distanceKmFromGeoJson={distanceKmFromGeoJson} formatDistance={formatDistance} /></div></div>
+    <ReportModal isOpen={Boolean(reportBatch)} batch={reportBatch} isLoading={reportBusy} onSubmit={submitReport} onCancel={() => { if (!reportBusy) setReportBatch(null); }} />
+  </main>;
 }
