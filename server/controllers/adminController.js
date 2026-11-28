@@ -59,19 +59,23 @@ async function backfillScopedImpactEntries(req) {
 }
 
 function adminSafeUser(user) {
+  const verificationStatus = ['suspended', 'rejected'].includes(user.verificationStatus)
+    ? user.verificationStatus
+    : user.verified ? 'verified' : (user.verificationStatus || 'pending');
   return {
     id: user._id.toString(), role: user.role, name: user.name, email: user.email,
     phone: user.phone, storeName: user.storeName, organizationName: user.organizationName,
     category: user.category, address: user.address, location: user.location,
     barangay: safeLocationValue(user.barangay, 'General Area'), municipality: safeLocationValue(user.municipality, 'Iloilo City'),
-    storefrontPhotoUrl: user.storefrontPhotoUrl, verificationStatus: user.verificationStatus,
+    storefrontPhotoUrl: user.storefrontPhotoUrl, verificationStatus,
+    verifiedAt: user.verifiedAt || user.verificationReviewedAt || null,
     rejectionReason: user.rejectionReason, createdAt: user.createdAt,
     zeroWasteCertified: user.zeroWasteCertified === true,
     hasVerificationDocument: Boolean(user.verificationDocPublicId || user.verificationDocDataUrl),
   };
 }
 
-async function aggregateLedger(req) {
+async function aggregateLedger(req, municipality = 'all') {
   const pipeline = [
     { $lookup: { from: User.collection.name, localField: 'merchantId', foreignField: '_id', as: 'merchant' } },
     { $unwind: { path: '$merchant', preserveNullAndEmptyArrays: true } },
@@ -83,6 +87,7 @@ async function aggregateLedger(req) {
   if (req.user.assignedMunicipality && req.user.assignedMunicipality !== 'ALL') {
     pipeline.push({ $match: { resolvedMunicipality: req.user.assignedMunicipality } });
   }
+  if (municipality && municipality !== 'all') pipeline.push({ $match: { resolvedMunicipality: municipality } });
   pipeline.push(
     { $group: {
       _id: { municipality: '$resolvedMunicipality', barangay: '$resolvedBarangay' },
@@ -141,13 +146,42 @@ async function listVerifications(req, res) {
   const statuses = ['pending', 'verified', 'rejected', 'suspended'];
   if (status !== 'all' && !statuses.includes(status)) throw httpError(400, 'INVALID_STATUS_FILTER', 'Choose a valid account status.');
   const statusFilter = status === 'all' ? {} : status === 'pending'
-    ? { $or: [{ verificationStatus: 'pending' }, { verificationStatus: { $exists: false }, verified: { $ne: true } }] }
-    : status === 'verified' ? { $or: [{ verificationStatus: 'verified' }, { verified: true }] }
+    ? { $or: [{ verificationStatus: 'pending', verified: { $ne: true } }, { verificationStatus: { $exists: false }, verified: { $ne: true } }] }
+    : status === 'verified' ? { $or: [{ verificationStatus: 'verified' }, { verificationStatus: { $nin: ['suspended', 'rejected'] }, verified: true }] }
       : { verificationStatus: status };
-  const users = await User.find({ role: { $in: ['merchant', 'ngo'] }, ...adminScope(req), ...statusFilter })
-    .select('+verificationDocPublicId +verificationDocFormat +verificationDocDataUrl +verificationDocMimeType +rejectionReason')
-    .sort({ createdAt: -1 }).limit(250).lean();
-  res.json({ success: true, data: { applicants: users.map(adminSafeUser) } });
+  const baseQuery = { role: { $in: ['merchant', 'ngo'] }, ...adminScope(req) };
+  const [users, pendingCount, verifiedCount, rejectedCount, allCount] = await Promise.all([
+    User.find({ ...baseQuery, ...statusFilter })
+      .select('+verificationDocPublicId +verificationDocFormat +verificationDocDataUrl +verificationDocMimeType +rejectionReason')
+      .sort({ createdAt: -1 }).limit(500).lean(),
+    User.countDocuments({ ...baseQuery, $or: [{ verificationStatus: 'pending', verified: { $ne: true } }, { verificationStatus: { $exists: false }, verified: { $ne: true } }] }),
+    User.countDocuments({ ...baseQuery, $or: [{ verificationStatus: 'verified' }, { verificationStatus: { $nin: ['suspended', 'rejected'] }, verified: true }] }),
+    User.countDocuments({ ...baseQuery, verificationStatus: { $in: ['rejected', 'suspended'] } }),
+    User.countDocuments(baseQuery),
+  ]);
+  const merchantIds = users.filter((user) => user.role === 'merchant').map((user) => user._id);
+  const merchantRescues = merchantIds.length ? await ImpactEntry.aggregate([
+    { $match: { merchantId: { $in: merchantIds } } },
+    { $group: { _id: '$merchantId', rescues: { $sum: '$quantity' } } },
+  ]) : [];
+  const rescuesByMerchant = new Map(merchantRescues.map((entry) => [String(entry._id), Number(entry.rescues) || 0]));
+  const ngoUsers = users.filter((user) => user.role === 'ngo' && user.phone);
+  const normalizedNgoPhones = new Set();
+  for (const ngo of ngoUsers) { try { normalizedNgoPhones.add(normalizePhone(ngo.phone)); } catch { /* ignore malformed legacy contacts */ } }
+  const ngoRescues = new Map();
+  if (normalizedNgoPhones.size) {
+    const claims = await Claim.find({ status: 'completed', phone: { $in: [...normalizedNgoPhones] } }).select('+phone qty').lean();
+    for (const claim of claims) {
+      try { const phone = normalizePhone(claim.phone); if (normalizedNgoPhones.has(phone)) ngoRescues.set(phone, (ngoRescues.get(phone) || 0) + Number(claim.qty || 0)); } catch { /* ignore malformed legacy contacts */ }
+    }
+  }
+  const applicants = users.map((user) => {
+    const output = adminSafeUser(user);
+    if (user.role === 'merchant') output.totalRescuesCompleted = rescuesByMerchant.get(String(user._id)) || 0;
+    else { try { output.totalRescuesCompleted = ngoRescues.get(normalizePhone(user.phone)) || 0; } catch { output.totalRescuesCompleted = 0; } }
+    return output;
+  });
+  res.set('Cache-Control', 'no-store').json({ success: true, data: { applicants, counts: { pending: pendingCount, verified: verifiedCount, rejected: rejectedCount, all: allCount } } });
 }
 
 async function getVerificationDocument(req, res) {
@@ -231,7 +265,10 @@ function csvCell(value) {
 
 async function exportMenro(req, res) {
   await backfillScopedImpactEntries(req);
-  const ledger = await aggregateLedger(req);
+  const municipality = typeof req.query.municipality === 'string' ? req.query.municipality : 'all';
+  if (municipality !== 'all' && !MUNICIPALITIES.includes(municipality)) throw httpError(400, 'INVALID_MUNICIPALITY', 'Choose a valid Iloilo municipality or city.');
+  if (req.user.assignedMunicipality && req.user.assignedMunicipality !== 'ALL' && municipality !== 'all' && municipality !== req.user.assignedMunicipality) throw httpError(403, 'OUTSIDE_JURISDICTION', 'You can only export MENRO data for your assigned municipality.');
+  const ledger = await aggregateLedger(req, municipality);
   const rows = [['municipality', 'barangay', 'rescued_meals', 'food_diverted_kg', 'co2e_prevented_kg'], ...ledger.map((row) => [row.municipality, row.barangay, row.mealsSaved, Number(row.foodDivertedKg).toFixed(2), Number(row.co2PreventedKg).toFixed(2)])];
   const csv = rows.map((row) => row.map(csvCell).join(',')).join('\r\n');
   res.set({ 'Cache-Control': 'no-store', 'Content-Disposition': 'attachment; filename="salbarkain-menro-impact.csv"' }).type('text/csv').send(csv);
@@ -301,35 +338,93 @@ async function listLguAdmins(req, res) {
   res.set('Cache-Control', 'no-store').json({ success: true, data: { officers: officers.map((officer) => ({ id: String(officer._id), officerName: officer.name, email: officer.email, assignedMunicipality: officer.assignedMunicipality || officer.municipality, verificationStatus: officer.verificationStatus || (officer.verified ? 'verified' : 'pending'), createdAt: officer.createdAt, inviteExpires: officer.inviteExpires || null })) } });
 }
 
+async function renewLguInvite(req, res, sendEmail) {
+  if (req.user.assignedMunicipality !== 'ALL') throw httpError(403, 'PROVINCIAL_ADMIN_REQUIRED', 'Only the Provincial Super-Admin can manage municipal LGU invitations.');
+  const officer = await User.findOne({ _id: req.params.officerId, role: 'admin', assignedMunicipality: { $ne: 'ALL' }, verificationStatus: 'pending' }).select('+inviteTokenHash +inviteExpires');
+  if (!officer) throw httpError(404, 'PENDING_OFFICER_NOT_FOUND', 'A pending municipal LGU invitation was not found.');
+  const inviteToken = crypto.randomBytes(32).toString('hex');
+  officer.inviteTokenHash = crypto.createHash('sha256').update(inviteToken).digest('hex');
+  officer.inviteExpires = new Date(Date.now() + 24 * 60 * 60 * 1000);
+  await officer.save();
+  const clientUrl = (process.env.CLIENT_URL || process.env.CLIENT_ORIGINS?.split(',')[0] || 'http://localhost:5173').trim().replace(/\/+$/, '');
+  const inviteUrl = `${clientUrl}/activate-lgu?token=${encodeURIComponent(inviteToken)}`;
+  let emailSent = false;
+  if (sendEmail && process.env.SMTP_USER?.trim() && process.env.SMTP_PASS?.trim()) {
+    try {
+      const smtpUser = process.env.SMTP_USER.trim();
+      const transporter = nodemailer.createTransport({ host: process.env.SMTP_HOST || 'smtp.gmail.com', port: Number(process.env.SMTP_PORT) || 587, secure: String(process.env.SMTP_SECURE || '').toLowerCase() === 'true', auth: { user: smtpUser, pass: process.env.SMTP_PASS.trim() } });
+      const escapeHtml = (value) => String(value).replace(/[&<>"']/g, (char) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[char]);
+      await transporter.sendMail({
+        from: process.env.SMTP_FROM?.trim() || smtpUser, to: officer.email,
+        subject: 'Your SalbarKain Iloilo LGU activation link',
+        text: `Hello ${officer.name}, your activation link for ${officer.assignedMunicipality} is ${inviteUrl}. It expires in 24 hours.`,
+        html: `<div style="font-family:Arial,sans-serif;color:#0F172A"><p style="color:#15803D;font-weight:bold">SALBARKAIN · ILOILO LGU</p><h1>Municipal admin activation</h1><p>Hello ${escapeHtml(officer.name)},</p><p>Your jurisdiction is <strong>${escapeHtml(officer.assignedMunicipality)}</strong>.</p><p><a href="${escapeHtml(inviteUrl)}">Activate your account</a></p><p>This link expires in 24 hours.</p></div>`,
+      });
+      emailSent = true;
+    } catch (error) { console.error('LGU invite resend failed:', { code: error.code || 'SMTP_SEND_FAILED' }); }
+  }
+  res.set('Cache-Control', 'no-store').json({ success: true, data: { officer: { id: String(officer._id), officerName: officer.name, email: officer.email, assignedMunicipality: officer.assignedMunicipality, inviteExpires: officer.inviteExpires }, inviteUrl, emailSent, message: emailSent ? 'A fresh activation link was emailed.' : 'SMTP is unavailable. Copy and share this fresh activation link.' } });
+}
+
+async function createLguActivationLink(req, res) { return renewLguInvite(req, res, false); }
+async function resendLguInvite(req, res) { return renewLguInvite(req, res, true); }
+
+async function setLguOfficerStatus(req, res) {
+  if (req.user.assignedMunicipality !== 'ALL') throw httpError(403, 'PROVINCIAL_ADMIN_REQUIRED', 'Only the Provincial Super-Admin can change municipal LGU access.');
+  const { status } = req.body || {};
+  if (!['verified', 'suspended'].includes(status)) throw httpError(400, 'INVALID_OFFICER_STATUS', 'Choose active or suspended access.');
+  const officer = await User.findOne({ _id: req.params.officerId, role: 'admin', assignedMunicipality: { $ne: 'ALL' } }).select('+inviteTokenHash +inviteExpires');
+  if (!officer) throw httpError(404, 'OFFICER_NOT_FOUND', 'Municipal LGU admin was not found.');
+  if (officer.verificationStatus === 'pending' && status === 'verified') throw httpError(409, 'INVITE_NOT_ACTIVATED', 'This officer must activate their account from the secure invitation first.');
+  officer.verificationStatus = status;
+  officer.verified = status === 'verified';
+  officer.verificationReviewedAt = new Date();
+  officer.verifiedBy = req.user.id;
+  officer.verifiedAt = new Date();
+  if (status === 'suspended') { officer.inviteTokenHash = null; officer.inviteExpires = null; }
+  await officer.save();
+  res.set('Cache-Control', 'no-store').json({ success: true, data: { officer: { id: String(officer._id), officerName: officer.name, assignedMunicipality: officer.assignedMunicipality, verificationStatus: officer.verificationStatus, verified: officer.verified } } });
+}
+
 async function leaderboard(req, res) {
   await backfillScopedImpactEntries(req);
   const scope = adminScope(req);
-  const [merchantTotals, ngoUsers] = await Promise.all([
-    ImpactEntry.aggregate([{ $match: scope }, { $group: { _id: '$merchantId', rescues: { $sum: '$quantity' } } }, { $match: { rescues: { $gte: 50 } } }]),
+  const [merchantUsers, ngoUsers] = await Promise.all([
+    User.find({ role: 'merchant', ...scope, $or: [{ verificationStatus: 'verified' }, { verified: true }] }).select('storeName municipality barangay zeroWasteCertified').lean(),
     User.find({ role: 'ngo', ...scope, $or: [{ verificationStatus: 'verified' }, { verified: true }] }).select('name organizationName phone municipality barangay zeroWasteCertified').lean(),
   ]);
-  const merchantMap = merchantTotals.length ? await User.find({ _id: { $in: merchantTotals.map((row) => row._id) }, role: 'merchant', ...scope, $or: [{ verificationStatus: 'verified' }, { verified: true }] }).select('storeName municipality barangay zeroWasteCertified').lean() : [];
-  const merchantById = new Map(merchantMap.map((merchant) => [String(merchant._id), merchant]));
-  const merchants = merchantTotals.map((row) => ({ ...merchantById.get(String(row._id)), id: String(row._id), rescues: row.rescues })).filter((row) => row.storeName);
+  const merchantIds = merchantUsers.map((user) => user._id);
+  const merchantTotals = merchantIds.length ? await ImpactEntry.aggregate([
+    { $match: { merchantId: { $in: merchantIds } } },
+    { $group: { _id: '$merchantId', rescues: { $sum: '$quantity' } } },
+  ]) : [];
+  const merchantRescues = new Map(merchantTotals.map((row) => [String(row._id), Number(row.rescues) || 0]));
+  const merchants = merchantUsers.map((merchant) => {
+    const rescues = merchantRescues.get(String(merchant._id)) || 0;
+    return { id: String(merchant._id), storeName: merchant.storeName, municipality: safeLocationValue(merchant.municipality, 'Iloilo City'), barangay: safeLocationValue(merchant.barangay, 'General Area'), rescues, foodDivertedKg: Number((rescues * 0.5).toFixed(2)), target: 50, zeroWasteCertified: merchant.zeroWasteCertified === true };
+  }).sort((a, b) => b.rescues - a.rescues || a.storeName.localeCompare(b.storeName));
   const phoneToNgos = new Map();
   for (const ngo of ngoUsers) {
     if (!ngo.phone) continue;
     try { const normalized = normalizePhone(ngo.phone); phoneToNgos.set(normalized, [...(phoneToNgos.get(normalized) || []), ngo]); } catch { /* ignore invalid legacy contact values */ }
   }
   const normalizedPhones = [...phoneToNgos.keys()];
-  let ngoTotals = [];
+  const ngoRescues = new Map();
   if (normalizedPhones.length) {
     const merchantIds = await scopedMerchantIds(req);
-    const match = { status: 'completed', phone: { $exists: true } };
+    const match = { status: 'completed', phone: { $in: normalizedPhones } };
     if (merchantIds) match.merchantId = { $in: merchantIds };
     const claims = await Claim.find(match).select('+phone qty').lean();
-    const totals = new Map();
     for (const claim of claims) {
-      try { const normalized = normalizePhone(claim.phone); if (phoneToNgos.has(normalized)) totals.set(normalized, (totals.get(normalized) || 0) + claim.qty); } catch { /* skip malformed historical contact values */ }
+      try { const normalized = normalizePhone(claim.phone); if (phoneToNgos.has(normalized)) ngoRescues.set(normalized, (ngoRescues.get(normalized) || 0) + Number(claim.qty || 0)); } catch { /* skip malformed historical contact values */ }
     }
-    ngoTotals = [...totals].filter(([, meals]) => meals >= 100).flatMap(([phone, meals]) => (phoneToNgos.get(phone) || []).map((ngo) => ({ id: String(ngo._id), name: ngo.organizationName || ngo.name, municipality: ngo.municipality, barangay: ngo.barangay, rescues: meals, zeroWasteCertified: ngo.zeroWasteCertified === true })));
   }
-  res.set('Cache-Control', 'no-store').json({ success: true, data: { merchants, ngos: ngoTotals } });
+  const ngos = ngoUsers.map((ngo) => {
+    let rescues = 0;
+    try { rescues = ngoRescues.get(normalizePhone(ngo.phone)) || 0; } catch { /* leave this NGO at zero */ }
+    return { id: String(ngo._id), name: ngo.organizationName || ngo.name, municipality: safeLocationValue(ngo.municipality, 'Iloilo City'), barangay: safeLocationValue(ngo.barangay, 'General Area'), rescues, foodDivertedKg: Number((rescues * 0.5).toFixed(2)), target: 100, zeroWasteCertified: ngo.zeroWasteCertified === true };
+  }).sort((a, b) => b.rescues - a.rescues || a.name.localeCompare(b.name));
+  res.set('Cache-Control', 'no-store').json({ success: true, data: { merchants, ngos } });
 }
 
 async function setPartnerCertification(req, res) {
@@ -338,12 +433,12 @@ async function setPartnerCertification(req, res) {
   const user = await User.findOne({ _id: req.params.userId, role: { $in: ['merchant', 'ngo'] }, ...adminScope(req), $or: [{ verificationStatus: 'verified' }, { verified: true }] });
   if (!user) throw httpError(404, 'PARTNER_NOT_FOUND', 'Verified partner was not found in your jurisdiction.');
   if (certified) {
-    const rescues = await ImpactEntry.aggregate([{ $match: { ...adminScope(req), ...(user.role === 'merchant' ? { merchantId: user._id } : {}) } }, { $group: { _id: null, quantity: { $sum: '$quantity' } } }]);
+    const rescues = await ImpactEntry.aggregate([{ $match: user.role === 'merchant' ? { merchantId: user._id } : { ...adminScope(req) } }, { $group: { _id: null, quantity: { $sum: '$quantity' } } }]);
     let eligibleRescues = Number(rescues[0]?.quantity || 0);
     if (user.role === 'ngo' && user.phone) {
       const normalized = normalizePhone(user.phone);
       const merchantIds = await scopedMerchantIds(req);
-      const match = { status: 'completed', phone: { $exists: true }, ...(merchantIds ? { merchantId: { $in: merchantIds } } : {}) };
+      const match = { status: 'completed', phone: normalized, ...(merchantIds ? { merchantId: { $in: merchantIds } } : {}) };
       const claims = await Claim.find(match).select('+phone qty').lean();
       eligibleRescues = claims.reduce((sum, claim) => { try { return normalizePhone(claim.phone) === normalized ? sum + Number(claim.qty || 0) : sum; } catch { return sum; } }, 0);
     }
@@ -355,4 +450,4 @@ async function setPartnerCertification(req, res) {
   res.json({ success: true, data: { id: user._id.toString(), zeroWasteCertified: user.zeroWasteCertified } });
 }
 
-module.exports = { overview, listVerifications, getVerificationDocument, reviewVerification, listFlaggedBatches, reviewFlaggedBatch, restoreFlaggedBatch, exportMenro, inviteLguAdmin, listLguAdmins, leaderboard, setPartnerCertification };
+module.exports = { overview, listVerifications, getVerificationDocument, reviewVerification, listFlaggedBatches, reviewFlaggedBatch, restoreFlaggedBatch, exportMenro, inviteLguAdmin, listLguAdmins, createLguActivationLink, resendLguInvite, setLguOfficerStatus, leaderboard, setPartnerCertification };

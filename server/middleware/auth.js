@@ -37,6 +37,9 @@ function authenticate(req, _res, next) {
       if (!user || user.role !== payload.role) {
         return next(httpError(401, 'INVALID_TOKEN', 'Your session is invalid. Sign in again.'));
       }
+      const verificationStatus = ['suspended', 'rejected'].includes(user.verificationStatus)
+        ? user.verificationStatus
+        : user.verified ? 'verified' : (user.verificationStatus || 'pending');
       req.user = {
         id: user._id.toString(),
         role: user.role,
@@ -44,8 +47,8 @@ function authenticate(req, _res, next) {
         email: user.email,
         storeName: user.storeName,
         organizationName: user.organizationName,
-        verified: user.verificationStatus === 'verified' || user.verified === true,
-        verificationStatus: user.verified ? 'verified' : (user.verificationStatus || 'pending'),
+        verified: verificationStatus === 'verified',
+        verificationStatus,
         storefrontPhotoUrl: user.storefrontPhotoUrl,
         barangay: user.barangay || 'Unspecified',
         municipality: user.municipality || 'Unspecified',
@@ -73,6 +76,9 @@ function authorizeRoles(...roles) {
   return (req, _res, next) => {
     if (!req.user || !roles.includes(req.user.role)) {
       return next(httpError(403, 'ROLE_FORBIDDEN', 'Your account cannot perform this action.'));
+    }
+    if (req.user.role === 'admin' && req.user.verificationStatus !== 'verified') {
+      return next(httpError(403, 'ADMIN_ACCESS_REVOKED', 'This LGU admin account is not currently active.'));
     }
     next();
   };
